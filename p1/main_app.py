@@ -20,7 +20,7 @@ class CommunicationsSimulatorApp:
         # Variables para SSB/ISB - Inicializar ANTES de crear las pestañas
         self.ssb_audio_file_path = tk.StringVar()
         self.ssb_audio_file_path2 = tk.StringVar() # Para ISB
-        self.ssb_carrier_freq = tk.DoubleVar(value=10000) # Default 10 kHz
+        self.ssb_carrier_freq = tk.DoubleVar(value=15000) # Default 15 kHz
         self.ssb_modulation_type = tk.StringVar(value="SSB-SC")
         self.ssb_band_type = tk.StringVar(value="USB")
         self.ssb_phase_error = tk.DoubleVar(value=0)
@@ -94,6 +94,7 @@ class CommunicationsSimulatorApp:
         button_frame.pack(padx=10, pady=5, fill="x")
         ttk.Button(button_frame, text="Modular y Demodular", command=self.run_ssb_simulation).pack(side="left", padx=5)
         ttk.Button(button_frame, text="Reproducir Audio Recuperado", command=self.play_recovered_ssb_audio).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Reproducir señal Modulada", command=lambda: play_audio(self.modulated_ssb_signal, self.samplerate) if self.modulated_ssb_signal is not None else messagebox.showwarning("Advertencia", "No hay señal modulada para reproducir.")).pack(side="left", padx=5)
 
         # Área de gráficas
         self.ssb_fig, self.ssb_axs = plt.subplots(3, 2, figsize=(12, 10))
