@@ -252,6 +252,7 @@ def record_audio(duration, fs):
 
 PREAMBLE_BITS = [1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0] # Secuencia de preámbulo más robusta (32 bits, 4 bytes)
 
+EPILOGUE_BITS = [1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1]
 
 def encode_data_with_protocol(bits, original_file_size, use_fec=False):
     """Codifica los bits con un preámbulo y metadatos (tamaño del archivo)."""
@@ -272,6 +273,7 @@ def encode_data_with_protocol(bits, original_file_size, use_fec=False):
 def decode_data_with_protocol(received_bits, use_fec=False):
     """Decodifica los bits recibidos, extrayendo metadatos y datos."""
     preamble_len = len(PREAMBLE_BITS)
+    epilogue_len = len(EPILOGUE_BITS)
     size_bits_len = 32 # Tamaño del campo de longitud del archivo en bits
 
     # Buscar el preámbulo en los bits recibidos
@@ -308,7 +310,20 @@ def decode_data_with_protocol(received_bits, use_fec=False):
     if original_file_size <= 0 or original_file_size > MAX_FILE_SIZE_BYTES:
         print(f"Error: Tamaño de archivo recuperado ({original_file_size} bytes) es inválido o excede el límite de {MAX_FILE_SIZE_BYTES} bytes.")
         return None, None
+        # --- Buscar epílogo ---
+    data_search_start = metadata_start_index + size_bits_len
+    epilogue_found_at = -1
+    for j in range(data_search_start, len(received_bits) - epilogue_len + 1):
+        if received_bits[j : j + epilogue_len] == EPILOGUE_BITS:
+            epilogue_found_at = j
+            break
 
+    if epilogue_found_at == -1:
+        # Si no se encuentra epílogo, decodificar hasta el final
+        print("⚠️  Epílogo no encontrado. Se usará todo el final del flujo como datos.")
+        data_payload_bits = received_bits[data_search_start:]
+    else:
+        data_payload_bits = received_bits[data_search_start:epilogue_found_at]
     # Los bits de datos reales (incluyendo posible FEC) comienzan después del preámbulo y el tamaño
     data_payload_start_index = metadata_start_index + size_bits_len
     data_payload_bits = received_bits[data_payload_start_index:]
