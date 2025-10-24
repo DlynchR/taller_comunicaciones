@@ -6,7 +6,7 @@ import os
 
 # Importar funciones proporcionadas por tus módulos
 from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio
-from digital_passband_modulator import file_to_bits, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
+from digital_passband_modulator import file_to_bits, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL, PREAMBLE_BITS, POSTAMBLE_BITS
 
 class TXApp:
     def __init__(self, root):
@@ -104,11 +104,16 @@ class TXApp:
                 minlen = min(len(msg), len(msg2))
                 mod = isb_modulate(msg[:minlen], msg2[:minlen], fs, fc)
 
+            # Anteponer preámbulo BPSK y agregar postámbulo BPSK a la señal SSB/ISB
+            pre = generate_passband_signal(bpsk_modulate(PREAMBLE_BITS), fc, fs, SAMPLES_PER_SYMBOL)
+            post = generate_passband_signal(bpsk_modulate(POSTAMBLE_BITS), fc, fs, SAMPLES_PER_SYMBOL)
+            full_tx = np.concatenate([pre.astype(np.float64), mod.astype(np.float64), post.astype(np.float64)])
+
             # normalizar y transmitir
-            mod = mod / np.max(np.abs(mod) + 1e-12) * 0.8
-            play_audio(mod, fs)
+            full_tx = full_tx / (np.max(np.abs(full_tx)) + 1e-12) * 0.8
+            play_audio(full_tx, fs)
             # store for saving
-            self.last_modulated = (mod, fs)
+            self.last_modulated = (full_tx, fs)
             messagebox.showinfo("Éxito", "Se transmitió la señal modulada por parlante (TX).")
 
         except Exception as e:

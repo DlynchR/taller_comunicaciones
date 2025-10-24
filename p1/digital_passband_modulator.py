@@ -252,6 +252,15 @@ def record_audio(duration, fs):
 
 PREAMBLE_BITS = [1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0] # Secuencia de preámbulo más robusta (32 bits, 4 bytes)
 
+# Secuencia de postámbulo (32 bits). Elegimos un patrón con baja autocorrelación cruzada
+# respecto del preámbulo: inversión del preámbulo y con un corrimiento.
+POSTAMBLE_BITS = [
+    0, 1, 0, 1, 0, 1, 0, 1,
+    0, 0, 0, 1, 1, 1, 0, 0,
+    0, 0, 0, 1, 1, 1, 0, 0,
+    0, 0, 0, 1, 1, 1, 0, 0
+]  # 32 bits
+
 
 def encode_data_with_protocol(bits, original_file_size, use_fec=False):
     """Codifica los bits con un preámbulo y metadatos (tamaño del archivo)."""
@@ -262,8 +271,8 @@ def encode_data_with_protocol(bits, original_file_size, use_fec=False):
     size_bytes = struct.pack(">I", original_file_size)
     size_bits = bytes_to_bits(size_bytes)
 
-    # Combinar preámbulo, tamaño y datos
-    encoded_bits = PREAMBLE_BITS + size_bits + bits
+    # Combinar preámbulo, tamaño y datos y postámbulo
+    encoded_bits = PREAMBLE_BITS + size_bits + bits + POSTAMBLE_BITS
 
     # Aplicar FEC (si se usa)
     encoded_bits = apply_fec(encoded_bits, use_fec)
