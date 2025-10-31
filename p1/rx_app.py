@@ -94,34 +94,42 @@ class RXApp:
 
             rec = record_audio(duration=duration, fs=FS)
 
-            # --- NUEVO BLOQUE: detección de preámbulo/postámbulo ---
-            start_idx, end_idx = detect_preamble_postamble(rec, FS, carrier, SAMPLES_PER_SYMBOL, PREAMBLE_BITS, POSTAMBLE_BITS)
+            # --- Detección de tonos de inicio y fin ---
+            start_idx, end_idx = detect_preamble_postamble(
+                rec, FS, carrier, SAMPLES_PER_SYMBOL, PREAMBLE_BITS, POSTAMBLE_BITS
+            )
+
             if end_idx <= start_idx:
-                messagebox.showerror("Error", "No se detectaron correctamente los tonos de inicio/fin.")
+                messagebox.showerror("Error", "No se detectaron los tonos de inicio/fin correctamente.")
                 return
 
             rec_segment = rec[start_idx:end_idx]
-            # -------------------------------------------------------
 
+            # --- Demodulación ---
             est_num_symbols = int((len(rec_segment) / FS) * (FS / SAMPLES_PER_SYMBOL))
             sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(
                 rec_segment, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols
             )
-
             demod_bits = bpsk_demodulate(sampled_symbols)
+
+            # --- Decodificación de protocolo ---
             recovered_bits, original_size = decode_data_with_protocol(demod_bits, use_fec=False)
             if recovered_bits is None:
-                messagebox.showerror("Error", "No se pudo decodificar protocolo. Verifica el SNR.")
+                messagebox.showerror("Error", "No se pudo decodificar protocolo (verifica el SNR o sincronización).")
                 return
 
-            outname = filedialog.asksaveasfilename(defaultextension=".bin", filetypes=[("Bin files","*.bin")], title="Guardar archivo recuperado")
+            # --- Guardar el archivo original con extensión flexible ---
+            outname = filedialog.asksaveasfilename(
+                title="Guardar archivo recuperado",
+                defaultextension="",
+                filetypes=[("Todos los archivos", "*.*")]
+            )
             if outname:
                 bits_to_file(recovered_bits, outname)
                 messagebox.showinfo("Guardado", f"Archivo recuperado guardado en: {outname}")
 
         except Exception as e:
             messagebox.showerror("Error RX Digital", str(e))
-
 
 
 if __name__ == "__main__":

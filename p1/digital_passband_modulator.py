@@ -261,21 +261,34 @@ POSTAMBLE_BITS = [
     0, 0, 0, 1, 1, 1, 0, 0
 ]  # 32 bits
 
-def detect_preamble_postamble(signal, fs, carrier_freq, samples_per_symbol, preamble_bits, postamble_bits):
-    """Detecta los índices aproximados de inicio y fin (preambulo y postambulo)."""
-    # Generar las señales de referencia (plantillas)
+def detect_preamble_postamble(signal, fs, carrier_freq, samples_per_symbol, preamble_bits, postamble_bits, threshold_ratio=0.5):
+    """
+    Detecta los índices aproximados de inicio y fin (preambulo y postambulo)
+    en la señal recibida por correlación cruzada.
+    """
     pre_signal = generate_passband_signal(bpsk_modulate(preamble_bits), carrier_freq, fs, samples_per_symbol)
     post_signal = generate_passband_signal(bpsk_modulate(postamble_bits), carrier_freq, fs, samples_per_symbol)
 
-    # Correlación cruzada para encontrar coincidencias
+    # Correlaciones cruzadas
     corr_pre = np.correlate(signal, pre_signal, mode='valid')
     corr_post = np.correlate(signal, post_signal, mode='valid')
 
-    start_index = np.argmax(np.abs(corr_pre))
-    end_index = np.argmax(np.abs(corr_post)) + len(post_signal)
+    # Normalizar correlaciones
+    corr_pre /= np.max(np.abs(corr_pre)) + 1e-12
+    corr_post /= np.max(np.abs(corr_post)) + 1e-12
 
-    print(f"Preámbulo detectado en muestra {start_index}, postámbulo en {end_index}")
-    return start_index, end_index
+    # Umbrales de detección
+    pre_candidates = np.where(np.abs(corr_pre) > threshold_ratio)[0]
+    post_candidates = np.where(np.abs(corr_post) > threshold_ratio)[0]
+
+    if len(pre_candidates) == 0 or len(post_candidates) == 0:
+        print("⚠️ No se detectaron preámbulo o postámbulo claramente.")
+        return 0, len(signal)
+
+    start_index = pre_candidates[0]
+    end_index = post_candidates[-1] + len(post_signal)
+    print(f"🔍 Preambulo detectado cerca de muestra {start_index}, postambulo en {end_index}")
+    return start_index, min(end_index, len(signal))
 
 def encode_data_with_protocol(bits, original_file_size, use_fec=False):
     """Codifica los bits con un preámbulo y metadatos (tamaño del archivo)."""

@@ -137,18 +137,26 @@ class TXApp:
             if not self.digital_path.get():
                 messagebox.showerror("Error", "Selecciona un archivo digital para transmitir.")
                 return
-            bits = file_to_bits(self.digital_path.get())
-            size = os.path.getsize(self.digital_path.get())
+
+            file_path = self.digital_path.get()
+            bits = file_to_bits(file_path)
+            size = os.path.getsize(file_path)
             encoded = encode_data_with_protocol(bits, size, use_fec=self.digital_use_fec.get())
+
             symbols = bpsk_modulate(encoded)
             carrier = float(self.carrier_digital.get())
             passband = generate_passband_signal(symbols, carrier, self.fs, SAMPLES_PER_SYMBOL)
             passband = 0.8 * passband / (np.max(np.abs(passband)) + 1e-12)
+
             transmit_audio(passband, self.fs)
             self.last_modulated = (passband, self.fs)
-            messagebox.showinfo("Transmisión", "Archivo transmitido por parlante (TX).")
+
+            fname = os.path.basename(file_path)
+            messagebox.showinfo("Transmisión", f"Archivo '{fname}' transmitido correctamente por parlante (TX).")
+
         except Exception as e:
             messagebox.showerror("Error TX Digital", str(e))
+
 
     def save_modulated_digital(self):
         try:
