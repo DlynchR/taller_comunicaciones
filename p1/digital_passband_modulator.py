@@ -261,6 +261,21 @@ POSTAMBLE_BITS = [
     0, 0, 0, 1, 1, 1, 0, 0
 ]  # 32 bits
 
+def detect_preamble_postamble(signal, fs, carrier_freq, samples_per_symbol, preamble_bits, postamble_bits):
+    """Detecta los índices aproximados de inicio y fin (preambulo y postambulo)."""
+    # Generar las señales de referencia (plantillas)
+    pre_signal = generate_passband_signal(bpsk_modulate(preamble_bits), carrier_freq, fs, samples_per_symbol)
+    post_signal = generate_passband_signal(bpsk_modulate(postamble_bits), carrier_freq, fs, samples_per_symbol)
+
+    # Correlación cruzada para encontrar coincidencias
+    corr_pre = np.correlate(signal, pre_signal, mode='valid')
+    corr_post = np.correlate(signal, post_signal, mode='valid')
+
+    start_index = np.argmax(np.abs(corr_pre))
+    end_index = np.argmax(np.abs(corr_post)) + len(post_signal)
+
+    print(f"Preámbulo detectado en muestra {start_index}, postámbulo en {end_index}")
+    return start_index, end_index
 
 def encode_data_with_protocol(bits, original_file_size, use_fec=False):
     """Codifica los bits con un preámbulo y metadatos (tamaño del archivo)."""

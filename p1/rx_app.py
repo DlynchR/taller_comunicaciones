@@ -5,7 +5,11 @@ import numpy as np
 
 from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio
 from digital_passband_modulator import record_audio, receive_and_demodulate_passband_signal, bpsk_demodulate, decode_data_with_protocol, bits_to_file, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
-
+from digital_passband_modulator import (
+    record_audio, receive_and_demodulate_passband_signal, bpsk_demodulate,
+    decode_data_with_protocol, bits_to_file, detect_preamble_postamble,
+    FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL, PREAMBLE_BITS, POSTAMBLE_BITS
+    )
 class RXApp:
     def __init__(self, root):
         self.root = root
@@ -78,6 +82,8 @@ class RXApp:
         except Exception as e:
             messagebox.showerror("Error RX SSB", str(e))
 
+
+
     def rx_digital(self):
         try:
             duration = float(self.record_duration.get())
@@ -85,25 +91,37 @@ class RXApp:
             if duration <= 0:
                 messagebox.showerror("Error", "Duración inválida")
                 return
+
             rec = record_audio(duration=duration, fs=FS)
-            # Necesitamos saber cuántos símbolos esperamos. Si no, estimamos desde duración.
-            # Estimación simple:
-            est_num_symbols = int((len(rec) / FS) * (FS / SAMPLES_PER_SYMBOL))
-            # receive_and_demodulate_passband_signal en tu módulo devuelve (sampled_symbols, filtered_baseband, demodulated_baseband)
-            sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(rec, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols)
+
+            # --- NUEVO BLOQUE: detección de preámbulo/postámbulo ---
+            start_idx, end_idx = detect_preamble_postamble(rec, FS, carrier, SAMPLES_PER_SYMBOL, PREAMBLE_BITS, POSTAMBLE_BITS)
+            if end_idx <= start_idx:
+                messagebox.showerror("Error", "No se detectaron correctamente los tonos de inicio/fin.")
+                return
+
+            rec_segment = rec[start_idx:end_idx]
+            # -------------------------------------------------------
+
+            est_num_symbols = int((len(rec_segment) / FS) * (FS / SAMPLES_PER_SYMBOL))
+            sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(
+                rec_segment, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols
+            )
+
             demod_bits = bpsk_demodulate(sampled_symbols)
-            # intentar decodificar protocolo
             recovered_bits, original_size = decode_data_with_protocol(demod_bits, use_fec=False)
             if recovered_bits is None:
-                messagebox.showerror("Error", "No se pudo decodificar protocolo (preambulo no encontrado). Revisa sincronización y SNR.")
+                messagebox.showerror("Error", "No se pudo decodificar protocolo. Verifica el SNR.")
                 return
-            # guardar archivo recuperado
-            outname = filedialog.asksaveasfilename(defaultextension=".bin", filetypes=[("Bin files","*.bin"),("All files","*.*")], title="Guardar archivo recuperado")
+
+            outname = filedialog.asksaveasfilename(defaultextension=".bin", filetypes=[("Bin files","*.bin")], title="Guardar archivo recuperado")
             if outname:
                 bits_to_file(recovered_bits, outname)
                 messagebox.showinfo("Guardado", f"Archivo recuperado guardado en: {outname}")
+
         except Exception as e:
             messagebox.showerror("Error RX Digital", str(e))
+
 
 
 if __name__ == "__main__":
