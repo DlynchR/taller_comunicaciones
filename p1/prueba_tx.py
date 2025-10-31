@@ -1,25 +1,38 @@
-import pyaudio
+#!/usr/bin/env python3
+import argparse
+import os
+import sys
 import wave
+import pyaudio
 
-def play_audio(filename):
-    CHUNK = 1024
-    wf = wave.open(filename, 'rb')
+def play_audio(filename, chunk=1024):
+    with wave.open(filename, 'rb') as wf:
+        p = pyaudio.PyAudio()
+        stream = p.open(
+            format=p.get_format_from_width(wf.getsampwidth()),
+            channels=wf.getnchannels(),
+            rate=wf.getframerate(),
+            output=True
+        )
+        data = wf.readframes(chunk)
+        while data:
+            stream.write(data)
+            data = wf.readframes(chunk)
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
 
-    p = pyaudio.PyAudio()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Reproduce un archivo WAV con PyAudio.")
+    parser.add_argument("archivo", help="Ruta al archivo .wav")
+    args = parser.parse_args()
 
-    stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
-                    channels=wf.getnchannels(),
-                    rate=wf.getframerate(),
-                    output=True)
+    if not os.path.isfile(args.archivo):
+        print(f"Archivo no encontrado: {args.archivo}", file=sys.stderr)
+        sys.exit(1)
 
-    data = wf.readframes(CHUNK)
-    while data:
-        stream.write(data)
-        data = wf.readframes(CHUNK)
-
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-
-if _name_ == "_main_":
-    play_audio("test.wav")  # cambia por tu archivo
+    try:
+        play_audio(args.archivo)
+    except Exception as e:
+        print(f"Error reproduciendo audio: {e}", file=sys.stderr)
+        sys.exit(2)
