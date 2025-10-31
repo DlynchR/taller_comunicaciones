@@ -6,7 +6,7 @@ import os
 
 # Importar funciones proporcionadas por tus módulos
 from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio
-from digital_passband_modulator import file_to_bits, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL, PREAMBLE_BITS, POSTAMBLE_BITS
+from digital_passband_modulator import file_to_bits, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
 
 class TXApp:
     def __init__(self, root):
@@ -27,6 +27,23 @@ class TXApp:
         self.fs = FS
 
         self.create_widgets()
+
+    def _load_beacon(self, target_fs):
+        """Carga 'message_test.wav' y lo remuestrea a target_fs. Si no existe, genera un tono de 1 kHz de 0.5 s y lo guarda para futuras corridas."""
+        beacon_path = os.path.join(os.path.dirname(__file__), "message_test.wav")
+        duration_fallback = 0.5
+        tone_freq = 1000.0
+        if not os.path.exists(beacon_path):
+            # Generar tono de respaldo y guardar
+            t = np.linspace(0, duration_fallback, int(target_fs * duration_fallback), endpoint=False)
+            beacon = 0.5 * np.sin(2 * np.pi * tone_freq * t).astype(np.float32)
+            save_audio(beacon_path, beacon, target_fs)
+            return beacon.astype(np.float32)
+        # Cargar y remuestrear si es necesario
+        beacon, fs_b = load_audio(beacon_path, target_samplerate=target_fs)
+        # Normalizar a -0.8..0.8
+        beacon = 0.8 * beacon / (np.max(np.abs(beacon)) + 1e-12)
+        return beacon.astype(np.float32)
 
     def create_widgets(self):
         # SSB/ISB frame
@@ -104,16 +121,17 @@ class TXApp:
                 minlen = min(len(msg), len(msg2))
                 mod = isb_modulate(msg[:minlen], msg2[:minlen], fs, fc)
 
-            # Anteponer preámbulo BPSK y agregar postámbulo BPSK a la señal SSB/ISB
-            pre = generate_passband_signal(bpsk_modulate(PREAMBLE_BITS), fc, fs, SAMPLES_PER_SYMBOL)
-            post = generate_passband_signal(bpsk_modulate(POSTAMBLE_BITS), fc, fs, SAMPLES_PER_SYMBOL)
-            full_tx = np.concatenate([pre.astype(np.float64), mod.astype(np.float64), post.astype(np.float64)])
+            # normalizar
+            mod = mod / (np.max(np.abs(mod)) + 1e-12) * 0.8
 
-            # normalizar y transmitir
-            full_tx = full_tx / (np.max(np.abs(full_tx)) + 1e-12) * 0.8
-            play_audio(full_tx, fs)
-            # store for saving
-            self.last_modulated = (full_tx, fs)
+            # Adjuntar balizas de inicio/fin
+            beacon = self._load_beacon(fs)
+            tx_signal = np.concatenate([beacon, mod.astype(np.float32), beacon])
+
+            # Transmitir
+            play_audio(tx_signal, fs)
+            # Guardar última señal para posible exportación
+            self.last_modulated = (tx_signal, fs)
             messagebox.showinfo("Éxito", "Se transmitió la señal modulada por parlante (TX).")
 
         except Exception as e:
@@ -144,8 +162,14 @@ class TXApp:
             carrier = float(self.carrier_digital.get())
             passband = generate_passband_signal(symbols, carrier, self.fs, SAMPLES_PER_SYMBOL)
             passband = 0.8 * passband / (np.max(np.abs(passband)) + 1e-12)
-            transmit_audio(passband, self.fs)
-            self.last_modulated = (passband, self.fs)
+
+            # Adjuntar balizas de inicio/fin
+            beacon = self._load_beacon(self.fs)
+            tx_signal = np.concatenate([beacon, passband.astype(np.float32), beacon])
+
+            # Transmitir
+            transmit_audio(tx_signal, self.fs)
+            self.last_modulated = (tx_signal, self.fs)
             messagebox.showinfo("Transmisión", "Archivo transmitido por parlante (TX).")
         except Exception as e:
             messagebox.showerror("Error TX Digital", str(e))

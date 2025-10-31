@@ -2,6 +2,11 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import numpy as np
+import os
+import threading
+import time
+import pyaudio
+import scipy.signal as signal
 
 from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio
 from digital_passband_modulator import record_audio, receive_and_demodulate_passband_signal, bpsk_demodulate, decode_data_with_protocol, bits_to_file, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
@@ -51,6 +56,81 @@ class RXApp:
         ttk.Entry(frame_dig, textvariable=self.record_duration, width=12).grid(row=1, column=1, sticky="w")
 
         ttk.Button(frame_dig, text="Grabar y Demodular Digital", command=self.rx_digital).grid(row=2, column=0, columnspan=2, pady=6)
+
+        ttk.Button(frame_dig, text="Escuchar y Demodular (balizas)", command=self.rx_digital_listen_mode).grid(row=3, column=0, columnspan=2, pady=6)
+
+    def _load_beacon(self, target_fs):
+        """Carga 'message_test.wav' y lo remuestrea a target_fs."""
+        beacon_path = os.path.join(os.path.dirname(__file__), "message_test.wav")
+        if not os.path.exists(beacon_path):
+            messagebox.showerror("Baliza no encontrada", f"No se encontró {beacon_path}. Asegúrate de tener la baliza en TX o genera una.")
+            return None
+        beacon, fs_b = load_audio(beacon_path, target_samplerate=target_fs)
+        # Normalizar y centrar
+        beacon = beacon.astype(np.float32)
+        beacon = beacon / (np.max(np.abs(beacon)) + 1e-12)
+        return beacon
+
+    def _listen_for_segment_with_beacons(self, fs, start_threshold=0.6, stop_threshold=0.6, timeout_sec=120):
+        """Escucha el micrófono hasta detectar la baliza de inicio y fin; devuelve el segmento entre ambas (sin incluir balizas)."""
+        beacon = self._load_beacon(fs)
+        if beacon is None:
+            return None
+        beacon = beacon - np.mean(beacon)
+        beacon /= (np.linalg.norm(beacon) + 1e-12)
+        blen = len(beacon)
+
+        p = pyaudio.PyAudio()
+        chunk = 1024
+        stream = p.open(format=pyaudio.paFloat32, channels=1, rate=fs, input=True, frames_per_buffer=chunk)
+
+        buf = np.zeros(0, dtype=np.float32)
+        recording = False
+        recorded = []
+        t0 = time.time()
+        try:
+            while True:
+                data = stream.read(chunk)
+                samples = np.frombuffer(data, dtype=np.float32)
+                # Normalizar un poco para estabilidad
+                if np.max(np.abs(samples)) > 1e-6:
+                    samples = samples / np.max(np.abs(samples))
+                if not recording:
+                    buf = np.concatenate([buf, samples])
+                    if len(buf) >= blen:
+                        window = buf[-blen:]
+                        w = window - np.mean(window)
+                        w /= (np.linalg.norm(w) + 1e-12)
+                        corr = float(np.dot(w, beacon))
+                        if corr >= start_threshold:
+                            # Empezar a grabar después de la baliza
+                            buf = np.zeros(0, dtype=np.float32)
+                            recording = True
+                            # print("Baliza de inicio detectada")
+                else:
+                    recorded.append(samples)
+                    # Revisar si al final aparece otra baliza (usar últimas blen muestras del acumulado)
+                    rec_concat = np.concatenate(recorded[-max(1, blen // chunk + 1):])
+                    if len(rec_concat) >= blen:
+                        tail = rec_concat[-blen:]
+                        t0v = tail - np.mean(tail)
+                        t0v /= (np.linalg.norm(t0v) + 1e-12)
+                        corr2 = float(np.dot(t0v, beacon))
+                        if corr2 >= stop_threshold:
+                            # Quitar la baliza final de los datos grabados
+                            total = np.concatenate(recorded)
+                            if len(total) >= blen:
+                                payload = total[:-blen]
+                            else:
+                                payload = total
+                            return payload.astype(np.float32)
+
+                if time.time() - t0 > timeout_sec:
+                    return None
+        finally:
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
 
     def rx_ssb(self):
         try:
@@ -104,6 +184,34 @@ class RXApp:
                 messagebox.showinfo("Guardado", f"Archivo recuperado guardado en: {outname}")
         except Exception as e:
             messagebox.showerror("Error RX Digital", str(e))
+
+    def rx_digital_listen_mode(self):
+        """Modo bloqueante que espera baliza de inicio y fin para capturar y demodular automáticamente."""
+        def worker():
+            try:
+                carrier = float(self.carrier_dig.get())
+                messagebox.showinfo("Escucha", "Entrando en modo escucha. Transmite desde TX con balizas.")
+                segment = self._listen_for_segment_with_beacons(FS, start_threshold=0.6, stop_threshold=0.6, timeout_sec=180)
+                if segment is None or len(segment) < SAMPLES_PER_SYMBOL * 10:
+                    messagebox.showerror("Escucha", "No se detectaron balizas o el segmento es demasiado corto.")
+                    return
+                # Demodular
+                est_num_symbols = max(1, int(len(segment) / SAMPLES_PER_SYMBOL))
+                sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(segment, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols)
+                demod_bits = bpsk_demodulate(sampled_symbols)
+                recovered_bits, original_size = decode_data_with_protocol(demod_bits, use_fec=False)
+                if recovered_bits is None:
+                    messagebox.showerror("Decodificación", "No se pudo decodificar el protocolo (preambulo no encontrado).")
+                    return
+                outname = filedialog.asksaveasfilename(defaultextension=".bin", filetypes=[("Bin files","*.bin"),("All files","*.*")], title="Guardar archivo recuperado")
+                if outname:
+                    bits_to_file(recovered_bits, outname)
+                    messagebox.showinfo("Guardado", f"Archivo recuperado guardado en: {outname}")
+            except Exception as e:
+                messagebox.showerror("Error RX Digital (escucha)", str(e))
+
+        # Ejecutar en hilo para no congelar la UI
+        threading.Thread(target=worker, daemon=True).start()
 
 
 if __name__ == "__main__":
