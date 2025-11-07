@@ -13,7 +13,6 @@ from digital_passband_modulator import (
     record_audio_with_tone_trigger,
     receive_and_demodulate_passband_signal,
     bpsk_demodulate,
-    decode_data_with_protocol,
     bits_to_file,
     FS,
     CARRIER_FREQ,
@@ -32,11 +31,10 @@ class RXApp:
 
         # Parámetros digitales
         self.carrier_dig = tk.DoubleVar(value=CARRIER_FREQ)
-        self.expected_symbols = tk.IntVar(value=0)
 
         self.create_widgets()
 
-        # 🔊 Parámetros de tonos para disparar grabación
+        # 🔊 Parámetros de tonos (puedes cambiarlos aquí)
         self.start_tone_freq = 1000.0
         self.stop_tone_freq = 2000.0
 
@@ -44,7 +42,7 @@ class RXApp:
         frame_ssb = ttk.LabelFrame(self.root, text="Recepción SSB / ISB (Audio)")
         frame_ssb.pack(fill="x", padx=8, pady=6)
 
-        ttk.Label(frame_ssb, text="Frecuencia portadora esperada (Hz):").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame_ssb, text="Frecuencia portadora SSB (Hz):").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame_ssb, textvariable=self.fc_ssb, width=12).grid(row=0, column=1, sticky="w")
 
         ttk.Label(frame_ssb, text="Error de fase (deg):").grid(row=1, column=0, sticky="w")
@@ -52,13 +50,14 @@ class RXApp:
 
         ttk.Label(frame_ssb, text="Error de frecuencia (Hz):").grid(row=2, column=0, sticky="w")
         ttk.Entry(frame_ssb, textvariable=self.freq_err, width=12).grid(row=2, column=1, sticky="w")
+        
 
         ttk.Button(frame_ssb, text="Escuchar y Demodular SSB", command=self.rx_ssb).grid(row=3, column=0, columnspan=2, pady=6)
 
-        frame_dig = ttk.LabelFrame(self.root, text="Recepción Digital Pasobanda")
+        frame_dig = ttk.LabelFrame(self.root, text="Recepción Digital Pasobanda (como audio)")
         frame_dig.pack(fill="x", padx=8, pady=6)
 
-        ttk.Label(frame_dig, text="Frecuencia portadora esperada (Hz):").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame_dig, text="Frecuencia portadora digital (Hz):").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame_dig, textvariable=self.carrier_dig, width=12).grid(row=0, column=1, sticky="w")
 
         ttk.Button(frame_dig, text="Escuchar y Demodular Digital", command=self.rx_digital).grid(row=1, column=0, columnspan=2, pady=6)
@@ -75,22 +74,22 @@ class RXApp:
                 return
 
             fc = float(self.fc_ssb.get())
-            phase_err = float(self.phase_err.get())
-            freq_err = float(self.freq_err.get())
-
-            recovered = ssb_demodulate(rec, FS, fc, phase_error_deg=phase_err, freq_error_hz=freq_err)
+            recovered = ssb_demodulate(rec, FS, fc,
+                                       phase_error_deg=float(self.phase_err.get()),
+                                       freq_error_hz=float(self.freq_err.get()))
             recovered = recovered / (np.max(np.abs(recovered)) + 1e-12)
 
             fname = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV files","*.wav")])
             if fname:
                 save_audio(fname, recovered, FS)
-                if messagebox.askyesno("Reproducir", "¿Reproducir audio ahora?"):
+                if messagebox.askyesno("Reproducir", "¿Reproducir audio?"):
                     play_audio(recovered, FS)
 
         except Exception as e:
             messagebox.showerror("Error RX SSB", str(e))
 
     def rx_digital(self):
+        """Ahora funciona como rx_ssb: NO espera preámbulos ni postámbulos."""
         try:
             carrier = float(self.carrier_dig.get())
 
@@ -99,26 +98,25 @@ class RXApp:
                 start_tone_freq=self.start_tone_freq,
                 stop_tone_freq=self.stop_tone_freq
             )
-            if rec is None or len(rec) < SAMPLES_PER_SYMBOL * 20:
-                messagebox.showerror("Error", "Señal muy corta o no detectada.")
+            if rec is None:
+                messagebox.showerror("Error", "No se detectó tono de inicio/fin.")
                 return
 
+            # Demodulación exactamente igual que antes
             est_num_symbols = max(1, int(len(rec) / SAMPLES_PER_SYMBOL))
 
             sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(
                 rec, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols
             )
-            demod_bits = bpsk_demodulate(sampled_symbols)
 
-            recovered_bits, original_size = decode_data_with_protocol(demod_bits, use_fec=False)
-            if recovered_bits is None:
-                messagebox.showerror("Error", "No se encontró preámbulo.")
-                return
+            # Señal recuperada = banda base filtrada
+            recovered = filtered_baseband / (np.max(np.abs(filtered_baseband)) + 1e-12)
 
-            outname = filedialog.asksaveasfilename(defaultextension=".bin", filetypes=[("Bin files","*.bin")])
-            if outname:
-                bits_to_file(recovered_bits, outname)
-                messagebox.showinfo("Guardado", f"Archivo recuperado guardado en: {outname}")
+            fname = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV files","*.wav")])
+            if fname:
+                save_audio(fname, recovered, FS)
+                if messagebox.askyesno("Reproducir", "¿Reproducir señal recuperada?"):
+                    play_audio(recovered, FS)
 
         except Exception as e:
             messagebox.showerror("Error RX Digital", str(e))
