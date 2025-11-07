@@ -338,6 +338,65 @@ def decode_data_with_protocol(received_bits, use_fec=False):
 
     return data_bits, original_file_size
 
+
+
+def record_audio_with_tone_trigger(
+        fs,
+        chunk=1024,
+        start_tone_freq=1000.0,
+        start_tone_bw=30.0,
+        start_ratio=0.5,
+        stop_tone_freq=2000.0,
+        stop_tone_bw=30.0,
+        stop_ratio=0.5
+    ):
+        """Graba indefinidamente hasta detectar tono de inicio; luego graba hasta tono de fin."""
+
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paFloat32, channels=1, rate=fs, input=True, frames_per_buffer=chunk)
+
+        print("📡 Esperando tono de INICIO...")
+        recording = False
+        frames = []
+
+        try:
+            while True:
+                data = stream.read(chunk, exception_on_overflow=False)
+                x = np.frombuffer(data, dtype=np.float32)
+
+                # FFT
+                w = np.hanning(len(x))
+                X = np.fft.rfft(x * w)
+                P = np.abs(X)**2
+                freqs = np.fft.rfftfreq(len(x), 1/fs)
+
+                def detect_tone(freq, bw, ratio):
+                    mask = np.abs(freqs - freq) <= bw
+                    band = P[mask].sum() if np.any(mask) else 0.0
+                    total = P.sum() + 1e-12
+                    return (band / total) >= ratio
+
+                if not recording:
+                    if detect_tone(start_tone_freq, start_tone_bw, start_ratio):
+                        print("🎙️ Tono de inicio detectado → Comenzando grabación...")
+                        recording = True
+                else:
+                    frames.append(x.copy())
+
+                    if detect_tone(stop_tone_freq, stop_tone_bw, stop_ratio):
+                        print("🛑 Tono de fin detectado → Finalizando grabación.")
+                        break
+
+        finally:
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+
+        if len(frames) == 0:
+            return None
+
+        return np.concatenate(frames)
+
 # --- Cálculo de BER ---
 
 def calculate_ber(original_bits, received_bits):
