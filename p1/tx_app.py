@@ -28,20 +28,15 @@ class TXApp:
 
         self.create_widgets()
 
-    def _load_beacon(self, target_fs):
-        """Carga 'message_test.wav' y lo remuestrea a target_fs. Si no existe, genera un tono de 1 kHz de 0.5 s y lo guarda para futuras corridas."""
-        beacon_path = os.path.join(os.path.dirname(__file__), "message_test.wav")
-        duration_fallback = 0.5
-        tone_freq = 1000.0
+    def _load_beacon(self, filename, tone_freq, target_fs, duration_fallback=0.5):
+        """Carga filename y si no existe genera un tono tone_freq Hz."""
+        beacon_path = os.path.join(os.path.dirname(__file__), filename)
         if not os.path.exists(beacon_path):
-            # Generar tono de respaldo y guardar
             t = np.linspace(0, duration_fallback, int(target_fs * duration_fallback), endpoint=False)
             beacon = 0.5 * np.sin(2 * np.pi * tone_freq * t).astype(np.float32)
             save_audio(beacon_path, beacon, target_fs)
-            return beacon.astype(np.float32)
-        # Cargar y remuestrear si es necesario
+            return beacon
         beacon, fs_b = load_audio(beacon_path, target_samplerate=target_fs)
-        # Normalizar a -0.8..0.8
         beacon = 0.8 * beacon / (np.max(np.abs(beacon)) + 1e-12)
         return beacon.astype(np.float32)
 
@@ -124,16 +119,14 @@ class TXApp:
             # normalizar
             mod = mod / (np.max(np.abs(mod)) + 1e-12) * 0.8
 
-            # Adjuntar balizas de inicio/fin
-            beacon = self._load_beacon(fs)
-            tx_signal = np.concatenate([beacon, mod.astype(np.float32), beacon])
+            # Balizas diferenciadas inicio (1 kHz) y fin (2 kHz)
+            start_beacon = self._load_beacon("message_start.wav", 1000.0, fs)
+            end_beacon = self._load_beacon("message_end.wav", 2000.0, fs)
+            tx_signal = np.concatenate([start_beacon, mod.astype(np.float32), end_beacon])
 
-            # Transmitir
             play_audio(tx_signal, fs)
-            # Guardar última señal para posible exportación
             self.last_modulated = (tx_signal, fs)
-            messagebox.showinfo("Éxito", "Se transmitió la señal modulada por parlante (TX).")
-
+            messagebox.showinfo("Éxito", "Se transmitió la señal modulada con balizas 1 kHz / 2 kHz.")
         except Exception as e:
             messagebox.showerror("Error TX SSB", str(e))
 
@@ -163,14 +156,13 @@ class TXApp:
             passband = generate_passband_signal(symbols, carrier, self.fs, SAMPLES_PER_SYMBOL)
             passband = 0.8 * passband / (np.max(np.abs(passband)) + 1e-12)
 
-            # Adjuntar balizas de inicio/fin
-            beacon = self._load_beacon(self.fs)
-            tx_signal = np.concatenate([beacon, passband.astype(np.float32), beacon])
+            start_beacon = self._load_beacon("message_start.wav", 1000.0, self.fs)
+            end_beacon = self._load_beacon("message_end.wav", 2000.0, self.fs)
+            tx_signal = np.concatenate([start_beacon, passband.astype(np.float32), end_beacon])
 
-            # Transmitir
             transmit_audio(tx_signal, self.fs)
             self.last_modulated = (tx_signal, self.fs)
-            messagebox.showinfo("Transmisión", "Archivo transmitido por parlante (TX).")
+            messagebox.showinfo("Transmisión", "Archivo transmitido con balizas 1 kHz / 2 kHz.")
         except Exception as e:
             messagebox.showerror("Error TX Digital", str(e))
 
