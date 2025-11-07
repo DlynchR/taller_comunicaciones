@@ -262,79 +262,29 @@ POSTAMBLE_BITS = [
 ]  # 32 bits
 
 
-def encode_data_with_protocol(bits, original_file_size, use_fec=False):
-    """Codifica los bits con un preámbulo y metadatos (tamaño del archivo)."""
-    # Convertir tamaño del archivo a bits (ej. 4 bytes = 32 bits)
-    # Asegurarse de que el tamaño del archivo no exceda el rango de un entero sin signo de 4 bytes
-    if original_file_size > 2**32 - 1:
-        raise ValueError("El tamaño del archivo excede el límite de 4GB para el protocolo.")
+def encode_data_simple(bits, original_file_size):
+    """Solo añade 32 bits de tamaño al inicio sin preámbulo ni postámbulo."""
+    import struct
     size_bytes = struct.pack(">I", original_file_size)
     size_bits = bytes_to_bits(size_bytes)
+    return size_bits + bits
 
-    # Combinar preámbulo, tamaño y datos y postámbulo
-    encoded_bits = PREAMBLE_BITS + size_bits + bits + POSTAMBLE_BITS
 
-    # Aplicar FEC (si se usa)
-    encoded_bits = apply_fec(encoded_bits, use_fec)
-    return encoded_bits
+def decode_data_simple(received_bits):
+    """Extrae los primeros 32 bits como tamaño y devuelve exactamente ese número de bits."""
+    import struct
 
-def decode_data_with_protocol(received_bits, use_fec=False):
-    """Decodifica los bits recibidos, extrayendo metadatos y datos."""
-    preamble_len = len(PREAMBLE_BITS)
-    size_bits_len = 32 # Tamaño del campo de longitud del archivo en bits
-
-    # Buscar el preámbulo en los bits recibidos
-    preamble_found_at = -1
-
-    for i in range(len(received_bits) - preamble_len + 1):
-        if received_bits[i : i + preamble_len] == PREAMBLE_BITS:
-            preamble_found_at = i
-            break
-
-    if preamble_found_at == -1:
-        print("Advertencia: Preámbulo no encontrado. No se puede determinar el inicio de los datos con precisión.")
+    if len(received_bits) < 32:
         return None, None
 
-    # Los bits de metadatos (tamaño del archivo) comienzan después del preámbulo
-    metadata_start_index = preamble_found_at + preamble_len
+    size_bits = received_bits[:32]
+    original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
 
-    if len(received_bits) < metadata_start_index + size_bits_len:
-        print("Error: No hay suficientes bits para el tamaño del archivo después del preámbulo.")
-        return None, None
+    expected_bits = original_file_size * 8
+    data_bits = received_bits[32 : 32 + expected_bits]
 
-    # Extraer los bits que representan el tamaño del archivo
-    raw_size_bits = received_bits[metadata_start_index : metadata_start_index + size_bits_len]
-
-    # Convertir a bytes y luego a entero
-    try:
-        original_file_size = struct.unpack(">I", bits_to_bytes(raw_size_bits))[0]
-    except struct.error as e:
-        print(f"Error al desempaquetar el tamaño del archivo: {e}. Bits: {raw_size_bits}")
-        return None, None
-
-    # Validar el tamaño del archivo para evitar MemoryError con valores absurdamente grandes
-    MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 # Límite de 10 MB para el archivo
-    if original_file_size <= 0 or original_file_size > MAX_FILE_SIZE_BYTES:
-        print(f"Error: Tamaño de archivo recuperado ({original_file_size} bytes) es inválido o excede el límite de {MAX_FILE_SIZE_BYTES} bytes.")
-        return None, None
-
-    # Los bits de datos reales (incluyendo posible FEC) comienzan después del preámbulo y el tamaño
-    data_payload_start_index = metadata_start_index + size_bits_len
-    data_payload_bits = received_bits[data_payload_start_index:]
-
-    # Decodificar FEC (si se usa) en los bits de datos
-    decoded_data_bits = decode_fec(data_payload_bits, use_fec)
-
-    # Recortar los bits de datos al tamaño original del archivo (en bytes)
-    expected_data_bits_len = original_file_size * 8
-
-    if len(decoded_data_bits) > expected_data_bits_len:
-        data_bits = decoded_data_bits[:expected_data_bits_len]
-    elif len(decoded_data_bits) < expected_data_bits_len:
-        print(f"Advertencia: Menos bits de datos recibidos ({len(decoded_data_bits)}) de los esperados ({expected_data_bits_len}). Rellenando con ceros.")
-        data_bits = decoded_data_bits + [0] * (expected_data_bits_len - len(decoded_data_bits))
-    else:
-        data_bits = decoded_data_bits
+    if len(data_bits) < expected_bits:
+        data_bits = data_bits + [0] * (expected_bits - len(data_bits))
 
     return data_bits, original_file_size
 

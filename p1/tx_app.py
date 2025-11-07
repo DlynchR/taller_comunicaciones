@@ -6,7 +6,7 @@ import os
 
 # Importar funciones proporcionadas por tus módulos
 from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio
-from digital_passband_modulator import file_to_bits, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
+from digital_passband_modulator import file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
 
 class TXApp:
     def __init__(self, root):
@@ -148,23 +148,35 @@ class TXApp:
             if not self.digital_path.get():
                 messagebox.showerror("Error", "Selecciona un archivo digital para transmitir.")
                 return
+
+            # Convertir archivo a bits
             bits = file_to_bits(self.digital_path.get())
             size = os.path.getsize(self.digital_path.get())
-            encoded = encode_data_with_protocol(bits, size, use_fec=self.digital_use_fec.get())
+
+            # Codificación sin preámbulo: solo tamaño + bits
+            encoded = encode_data_simple(bits, size)
+
+            # Modulación
             symbols = bpsk_modulate(encoded)
             carrier = float(self.carrier_digital.get())
             passband = generate_passband_signal(symbols, carrier, self.fs, SAMPLES_PER_SYMBOL)
             passband = 0.8 * passband / (np.max(np.abs(passband)) + 1e-12)
 
+            # Señales de inicio (1 kHz) y fin (2 kHz)
             start_beacon = self._load_beacon("message_start.wav", 1000.0, self.fs)
             end_beacon = self._load_beacon("message_end.wav", 2000.0, self.fs)
+
+            # Señal final transmitida por parlantes
             tx_signal = np.concatenate([start_beacon, passband.astype(np.float32), end_beacon])
 
             transmit_audio(tx_signal, self.fs)
             self.last_modulated = (tx_signal, self.fs)
-            messagebox.showinfo("Transmisión", "Archivo transmitido con balizas 1 kHz / 2 kHz.")
+
+            messagebox.showinfo("Transmisión", "Archivo transmitido con tonos de inicio (1 kHz) y fin (2 kHz).")
+
         except Exception as e:
             messagebox.showerror("Error TX Digital", str(e))
+
 
     def save_modulated_digital(self):
         try:

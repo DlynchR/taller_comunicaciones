@@ -12,12 +12,14 @@ from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio
 from digital_passband_modulator import (
     record_audio_with_tone_trigger,
     receive_and_demodulate_passband_signal,
+    decode_data_simple,   # ← usamos este
     bpsk_demodulate,
     bits_to_file,
     FS,
     CARRIER_FREQ,
     SAMPLES_PER_SYMBOL
 )
+
 
 class RXApp:
     def __init__(self, root):
@@ -89,37 +91,59 @@ class RXApp:
             messagebox.showerror("Error RX SSB", str(e))
 
     def rx_digital(self):
-        """Ahora funciona como rx_ssb: NO espera preámbulos ni postámbulos."""
+        """Recepción digital completa: tono inicio → grabar → tono fin → BPSK → protocolo → reconstrucción de archivo."""
         try:
             carrier = float(self.carrier_dig.get())
 
+            # 1) GRABAR POR TONOS
             rec = record_audio_with_tone_trigger(
                 fs=FS,
                 start_tone_freq=self.start_tone_freq,
                 stop_tone_freq=self.stop_tone_freq
             )
-            if rec is None:
-                messagebox.showerror("Error", "No se detectó tono de inicio/fin.")
+            if rec is None or len(rec) < SAMPLES_PER_SYMBOL * 20:
+                messagebox.showerror("Error", "La grabación fue muy corta o no se detectaron tonos correctamente.")
                 return
 
-            # Demodulación exactamente igual que antes
+            # 2) DEMODULACIÓN COMPLETA PASOBANDA
             est_num_symbols = max(1, int(len(rec) / SAMPLES_PER_SYMBOL))
-
             sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(
                 rec, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols
             )
 
-            # Señal recuperada = banda base filtrada
-            recovered = filtered_baseband / (np.max(np.abs(filtered_baseband)) + 1e-12)
+            # 3) BPSK → Bits
+            demod_bits = bpsk_demodulate(sampled_symbols)
 
-            fname = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV files","*.wav")])
-            if fname:
-                save_audio(fname, recovered, FS)
-                if messagebox.askyesno("Reproducir", "¿Reproducir señal recuperada?"):
-                    play_audio(recovered, FS)
+            # 4) Decodificación de protocolo (encuentra preámbulo y tamaño automáticamente)
+
+            recovered_bits, original_size = decode_data_simple(demod_bits)
+
+            if recovered_bits is None:
+                messagebox.showerror("Error en protocolo", "No se pudo detectar el preámbulo o el tamaño del archivo.")
+                return
+
+            # 5) Guardar archivo recuperado
+            outname = filedialog.asksaveasfilename(
+                defaultextension="",
+                filetypes=[
+                    ("Archivos binarios", "*.bin"),
+                    ("Texto", "*.txt"),
+                    ("Imagen PNG", "*.png"),
+                    ("Imagen JPG", "*.jpg"),
+                    ("Todos los archivos", "*.*")
+                ],
+                title="Guardar archivo recuperado"
+            )
+            if not outname:
+                return
+
+            bits_to_file(recovered_bits, outname)
+
+            messagebox.showinfo("Archivo guardado", f"✅ Archivo reconstruido y guardado:\n{outname}")
 
         except Exception as e:
             messagebox.showerror("Error RX Digital", str(e))
+
 
 
 if __name__ == "__main__":
