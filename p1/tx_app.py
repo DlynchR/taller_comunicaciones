@@ -154,7 +154,9 @@ class TXApp:
             size = os.path.getsize(self.digital_path.get())
 
             # Codificación sin preámbulo: solo tamaño + bits
-            encoded = encode_data_simple(bits, size)
+            file_extension = os.path.splitext(self.digital_path.get())[1].replace(".", "")
+            encoded = encode_data_simple(bits, size, file_extension)
+
 
             # Modulación
             symbols = bpsk_modulate(encoded)

@@ -262,31 +262,58 @@ POSTAMBLE_BITS = [
 ]  # 32 bits
 
 
-def encode_data_simple(bits, original_file_size):
-    """Solo añade 32 bits de tamaño al inicio sin preámbulo ni postámbulo."""
+def encode_data_simple(bits, original_file_size, file_extension):
+    """
+    Formato transmitido:
+    [size: 4 bytes] [ext_len: 1 byte] [ext ASCII] [payload bits]
+    """
     import struct
+
+    # Tamaño del archivo en bytes → 4 bytes big-endian
     size_bytes = struct.pack(">I", original_file_size)
     size_bits = bytes_to_bits(size_bytes)
-    return size_bits + bits
+
+    # Extensión
+    ext_bytes = file_extension.encode("ascii")
+    ext_len = len(ext_bytes)
+    ext_len_bits = bytes_to_bits(bytes([ext_len]))
+    ext_bits = bytes_to_bits(ext_bytes)
+
+    # Ensamblar
+    return size_bits + ext_len_bits + ext_bits + bits
 
 
 def decode_data_simple(received_bits):
-    """Extrae los primeros 32 bits como tamaño y devuelve exactamente ese número de bits."""
+    """
+    Extrae tamaño, extensión y payload.
+    """
     import struct
 
+    # ➤ Tamaño (4 bytes → 32 bits)
     if len(received_bits) < 32:
-        return None, None
+        return None, None, None
 
     size_bits = received_bits[:32]
     original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
 
+    # ➤ Longitud extensión (1 byte → 8 bits)
+    ext_len_bits = received_bits[32:40]
+    ext_len = bits_to_bytes(ext_len_bits)[0]
+
+    # ➤ Extensión ASCII
+    ext_bits = received_bits[40:40 + ext_len*8]
+    file_extension = bits_to_bytes(ext_bits).decode("ascii")
+
+    # ➤ Datos reales
+    data_start = 40 + ext_len*8
     expected_bits = original_file_size * 8
-    data_bits = received_bits[32 : 32 + expected_bits]
+    data_bits = received_bits[data_start:data_start + expected_bits]
 
+    # Relleno si llegaron menos bits
     if len(data_bits) < expected_bits:
-        data_bits = data_bits + [0] * (expected_bits - len(data_bits))
+        data_bits += [0] * (expected_bits - len(data_bits))
 
-    return data_bits, original_file_size
+    return data_bits, original_file_size, file_extension
 
 
 

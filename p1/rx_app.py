@@ -116,28 +116,26 @@ class RXApp:
 
             # 4) Decodificación de protocolo (encuentra preámbulo y tamaño automáticamente)
 
-            recovered_bits, original_size = decode_data_simple(demod_bits)
+            recovered_bits, original_size, file_extension = decode_data_simple(demod_bits)
+
 
             if recovered_bits is None:
                 messagebox.showerror("Error en protocolo", "No se pudo detectar el preámbulo o el tamaño del archivo.")
                 return
 
             # 5) Guardar archivo recuperado
+            default_name = f"archivo_recibido.{file_extension}"
+
             outname = filedialog.asksaveasfilename(
-                defaultextension="",
-                filetypes=[
-                    ("Archivos binarios", "*.bin"),
-                    ("Texto", "*.txt"),
-                    ("Imagen PNG", "*.png"),
-                    ("Imagen JPG", "*.jpg"),
-                    ("Todos los archivos", "*.*")
-                ],
-                title="Guardar archivo recuperado"
+                initialfile=default_name,
+                filetypes=[("Todos los archivos", "*.*")]
             )
             if not outname:
                 return
 
             bits_to_file(recovered_bits, outname)
+
+
 
             messagebox.showinfo("Archivo guardado", f"✅ Archivo reconstruido y guardado:\n{outname}")
 
