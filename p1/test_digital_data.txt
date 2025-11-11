@@ -1,3 +1,1 @@
-Hola mundo! Este es un mensaje de prueba para la transmisión digital.
-El objetivo es enviar este archivo a través del canal de audio.
-Se utilizará modulación BPSK y un protocolo simple.
+Hola mundo! 

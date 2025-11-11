@@ -17,7 +17,7 @@ import os
 # Parámetros (ajustables)
 FS = 44100            # frecuencia de muestreo (Hz)
 CARRIER = 2000.0      # frecuencia portadora (Hz)
-BAUD = 200.0          # símbolos por segundo (baud)
+BAUD = 100.0          # símbolos por segundo (baud)
 SAMPLES_PER_SYMBOL = int(FS / BAUD)
 PREAMBLE_BITS = np.tile([1,0], 64)  # preámbulo alternado para sincronía
 HEADER_FMT = "{:016d}:{:08x}:"  # header = <num_bits(16)>:<crc32(8hex)>:
@@ -47,7 +47,13 @@ def pack_frame(bits, filename=None):
 
 def bits_to_nrz_symbols(bits):
     """Convierte bits 0/1 a símbolos NRZ bipolar: 0 -> -1, 1 -> +1"""
-    return 2*bits - 1
+    sym = np.zeros(len(bits), dtype=np.int8)
+    current = 1
+    for i, b in enumerate(bits):
+        if b == 1:
+            current = -current
+        sym[i] = current
+    return sym.astype(np.float32)
 
 def pulse_shape(symbols, sps):
     """Upsample (hold) cada símbolo durante sps muestras (rectangular pulse)."""
