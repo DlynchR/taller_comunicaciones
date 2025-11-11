@@ -72,9 +72,30 @@ def main():
 	outdir.mkdir(parents=True, exist_ok=True)
 	ext = args.ext if args.ext else frame['extension']
 	outname = outdir / f"received.{ext}"
+	payload = frame['payload']
 	with open(outname, 'wb') as f:
-		f.write(frame['payload'])
-	print(f"Recovered file saved: {outname} ({len(frame['payload'])} bytes)")
+		f.write(payload)
+	print(f"Recovered file saved: {outname} ({len(payload)} bytes)")
+
+	# If it's text (by ext or forced), print decoded message to console
+	if (args.ext and args.ext.lower() == 'txt') or ext.lower() == 'txt':
+		try:
+			# Try utf-8 first, fallback to latin-1 to avoid decode errors
+			try:
+				text = payload.decode('utf-8')
+			except UnicodeDecodeError:
+				text = payload.decode('latin-1', errors='replace')
+			print("\n===== Mensaje recibido (texto) =====\n")
+			# Avoid flooding terminal if very large
+			if len(text) <= 10000:
+				print(text)
+			else:
+				print(text[:5000])
+				print("\n... [truncado] ...\n")
+				print(text[-5000:])
+			print("\n===== Fin del mensaje =====\n")
+		except Exception as e:
+			print(f"Warning: no se pudo mostrar el texto: {e}")
 	return 0
 
 

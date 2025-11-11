@@ -192,9 +192,17 @@ def guess_extension(data: bytes) -> str:
     if len(head) == 0:
         return "bin"
     printable = sum(32 <= b <= 126 or b in (9,10,13) for b in head)
-    if printable / len(head) > 0.85:
+    if printable / len(head) > 0.60:
         return "txt"
     return "bin"
+
+
+def is_mostly_text(data: bytes, threshold: float = 0.60) -> bool:
+    if not data:
+        return False
+    head = data[:2048]
+    printable = sum(32 <= b <= 126 or b in (9,10,13) for b in head)
+    return (printable / len(head)) >= threshold
 
 
 def recover_bytes_from_signal_no_preamble(rx_sig: np.ndarray, cfg: BPSKConfig, force_invert: bool=False):
@@ -219,6 +227,9 @@ def recover_bytes_from_signal_no_preamble(rx_sig: np.ndarray, cfg: BPSKConfig, f
     pick_a = priority.get(ext_a,0) >= priority.get(ext_b,0)
     payload = bytes_a if pick_a else bytes_b
     ext = ext_a if pick_a else ext_b
+    # If still unknown (bin) but looks text-ish, switch to txt
+    if ext == "bin" and is_mostly_text(payload):
+        ext = "txt"
     return {"payload": payload, "extension": ext}, None
 
 if __name__ == "__main__":
