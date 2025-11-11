@@ -2,7 +2,7 @@ import numpy as np
 import sounddevice as sd
 import scipy.signal as signal
 import argparse
-from hashlib import crc32
+from binascii import crc32
 
 def bytes_to_bits(b):
     return np.unpackbits(np.frombuffer(b, dtype=np.uint8)).astype(np.uint8)
