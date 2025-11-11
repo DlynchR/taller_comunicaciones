@@ -22,7 +22,7 @@ import numpy as np
 
 from bpsk_common import (
 	BPSKConfig,
-	build_signal_from_file,
+	build_signal_from_file_raw,
 	play_audio,
 	save_wav,
 )
@@ -49,7 +49,7 @@ def main():
 	# override samples_per_symbol properly:
 	cfg.samples_per_symbol = cfg.fs // args.symbol_rate
 
-	sig, meta = build_signal_from_file(str(infile), cfg)
+	sig, meta = build_signal_from_file_raw(str(infile), cfg)
 	print(f"Built signal: {meta['bits']} bits, payload {meta['payload_bytes']} bytes")
 	duration = len(sig)/cfg.fs
 	print(f"Signal duration: {duration:.2f} s at fs={cfg.fs} carrier={cfg.carrier}Hz")

@@ -41,10 +41,6 @@ FS = 44100                 # sample rate (Hz)
 CARRIER_FREQ = 6000        # acoustic carrier (Hz) – keep well below Nyquist
 SYMBOL_RATE = 100          # symbols per second (keep low for reliability)
 SAMPLES_PER_SYMBOL = FS // SYMBOL_RATE
-PREAMBLE = 0xA5A55A5A
-PREAMBLE_BITS = 32
-MAX_EXTENSION_LEN = 8
-MAX_PAYLOAD_BYTES = 65535  # matches 16-bit length field
 ENERGY_THRESHOLD = 0.02
 
 @dataclass
@@ -54,7 +50,7 @@ class BPSKConfig:
     symbol_rate: int = SYMBOL_RATE
     samples_per_symbol: int = SAMPLES_PER_SYMBOL
 
-# -------- Bit & framing helpers ---------
+# -------- Bit helpers (raw, sin preámbulo) ---------
 
 def bytes_to_bits(data: bytes) -> np.ndarray:
     return np.unpackbits(np.frombuffer(data, dtype=np.uint8))
@@ -65,56 +61,7 @@ def bits_to_bytes(bits: np.ndarray) -> bytes:
         bits = np.concatenate([bits, np.zeros(8 - len(bits)%8, dtype=np.uint8)])
     return np.packbits(bits).tobytes()
 
-def build_frame(payload: bytes, extension: str) -> np.ndarray:
-    if len(payload) > MAX_PAYLOAD_BYTES:
-        raise ValueError("Payload too large")
-    ext = extension.lower().strip('.')
-    if len(ext) == 0:
-        ext = 'bin'
-    if len(ext) > MAX_EXTENSION_LEN:
-        raise ValueError("Extension too long")
-    # header
-    length_field = len(payload).to_bytes(2, 'little')
-    ext_len_field = len(ext).to_bytes(1, 'little')
-    header = length_field + ext_len_field + ext.encode('ascii')
-    crc32 = zlib.crc32(payload) & 0xFFFFFFFF
-    frame_bytes = PREAMBLE.to_bytes(4, 'big') + header + payload + crc32.to_bytes(4, 'little')
-    bits = bytes_to_bits(frame_bytes)
-    return bits.astype(np.uint8)
-
-def parse_frame(bits: np.ndarray):
-    # search preamble (convert bits to bytes gradually)
-    if len(bits) < (PREAMBLE_BITS + 16 + 8 + 32):
-        return None, "Too few bits"
-    # sliding window to find preamble pattern 0xA5A55A5A
-    preamble_bytes = PREAMBLE.to_bytes(4, 'big')
-    # convert bits to bytes for scanning
-    raw_bytes = bits_to_bytes(bits)
-    idx = raw_bytes.find(preamble_bytes)
-    if idx == -1:
-        return None, "Preamble not found"
-    pos_bits = idx * 8 + PREAMBLE_BITS  # position after preamble bits
-    # Need at least header
-    if len(bits) < pos_bits + (16 + 8):
-        return None, "Incomplete header"
-    # Re-extract from byte offset for simplicity
-    frame_after = raw_bytes[idx+4:]  # skip preamble bytes
-    if len(frame_after) < 3:
-        return None, "Incomplete header 2"
-    payload_len = int.from_bytes(frame_after[0:2], 'little')
-    ext_len = frame_after[2]
-    if ext_len == 0 or ext_len > MAX_EXTENSION_LEN:
-        return None, "Bad extension length"
-    needed = 2 + 1 + ext_len + payload_len + 4
-    if len(frame_after) < needed:
-        return None, "Incomplete payload"
-    ext = frame_after[3:3+ext_len].decode('ascii', errors='ignore')
-    payload = frame_after[3+ext_len:3+ext_len+payload_len]
-    crc_recv = int.from_bytes(frame_after[3+ext_len+payload_len:3+ext_len+payload_len+4], 'little')
-    crc_calc = zlib.crc32(payload) & 0xFFFFFFFF
-    if crc_calc != crc_recv:
-        return None, f"CRC mismatch calc={crc_calc:08X} recv={crc_recv:08X}"
-    return {"extension": ext, "payload": payload}, None
+# No framing: enviar bytes crudos, recibir bytes crudos.
 
 # -------- Modulation / Demodulation ---------
 
@@ -138,11 +85,8 @@ def modulate(bits: np.ndarray, cfg: BPSKConfig) -> np.ndarray:
     return tx.astype(np.float32)
 
 def demodulate(rx: np.ndarray, cfg: BPSKConfig) -> np.ndarray:
-    """Demodulate BPSK and perform simple timing/polarity search using preamble bytes.
-
-    Tries all symbol offsets in [0..SPS-1], and both polarities, returning the bit
-    sequence for the best candidate (first preamble hit; otherwise the one with
-    maximal correlation to preamble bytes).
+    """Demodulación sin preámbulo: busca el offset de símbolo que maximiza
+    la energía de las muestras y devuelve los bits para la mejor polaridad.
     """
     # Mix down
     t = np.arange(len(rx)) / cfg.fs
@@ -153,11 +97,8 @@ def demodulate(rx: np.ndarray, cfg: BPSKConfig) -> np.ndarray:
     kernel = np.ones(sps)
     filtered = np.convolve(mixed, kernel, mode='same') / sps
 
-    # Prepare reference preamble bytes
-    preamble_bytes = PREAMBLE.to_bytes(4, 'big')
-
     best_bits = None
-    best_score = -1
+    best_metric = -1.0
 
     # Try each symbol offset
     for off in range(sps):
@@ -169,17 +110,17 @@ def demodulate(rx: np.ndarray, cfg: BPSKConfig) -> np.ndarray:
         sample_points = sample_points[(sample_points >= 0) & (sample_points < len(filtered))]
         sym_vals = filtered[sample_points]
 
-        for polarity in (1.0, -1.0):
-            bits = symbols_to_bits(polarity * sym_vals)
-            raw = bits_to_bytes(bits)
-            idx = raw.find(preamble_bytes)
-            score = (len(raw) - idx) if idx >= 0 else 0
-            # keep if found or better score
-            if idx >= 0:
-                return bits  # early return on success
-            if score > best_score:
-                best_score = score
-                best_bits = bits
+        # Use energy metric to choose offset
+        metric = float(np.mean(np.abs(sym_vals)))
+        if metric > best_metric:
+            # pick polarity that yields 'sharper' distribution (same metric works)
+            bits_pos = symbols_to_bits(sym_vals)
+            bits_neg = symbols_to_bits(-sym_vals)
+            # Choose by variance of symbol values after decision aid
+            var_pos = float(np.var((bits_pos*2-1).astype(np.float32)))
+            var_neg = float(np.var((bits_neg*2-1).astype(np.float32)))
+            best_bits = bits_pos if var_pos >= var_neg else bits_neg
+            best_metric = metric
 
     return best_bits if best_bits is not None else np.array([], dtype=np.uint8)
 
@@ -221,36 +162,75 @@ def load_wav(path: str, target_fs: int | None = None):
         fs = target_fs
     return data.astype(np.float32), fs
 
-# -------- Convenience high-level ---------
+# -------- Convenience high-level (sin preámbulo) ---------
 
-def build_signal_from_file(path: str, cfg: BPSKConfig) -> tuple[np.ndarray, dict]:
+def build_signal_from_file_raw(path: str, cfg: BPSKConfig) -> tuple[np.ndarray, dict]:
     with open(path, 'rb') as f:
         payload = f.read()
-    ext = path.split('.')[-1] if '.' in path else 'bin'
-    bits = build_frame(payload, ext)
+    bits = bytes_to_bits(payload)
     sig = modulate(bits, cfg)
     meta = {"bits": len(bits), "payload_bytes": len(payload)}
     return sig, meta
 
 
-def recover_file_from_signal(rx_sig: np.ndarray, cfg: BPSKConfig):
+MAGICS = [
+    (b"\xFF\xD8\xFF", "jpg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF8", "gif"),
+    (b"%PDF", "pdf"),
+    (b"PK\x03\x04", "zip"),
+    (b"RIFF", "wav"),
+    (b"OggS", "ogg"),
+]
+
+def guess_extension(data: bytes) -> str:
+    for magic, ext in MAGICS:
+        if data.startswith(magic):
+            return ext
+    # ASCII text heuristic
+    head = data[:512]
+    if len(head) == 0:
+        return "bin"
+    printable = sum(32 <= b <= 126 or b in (9,10,13) for b in head)
+    if printable / len(head) > 0.85:
+        return "txt"
+    return "bin"
+
+
+def recover_bytes_from_signal_no_preamble(rx_sig: np.ndarray, cfg: BPSKConfig, force_invert: bool=False):
     bits = demodulate(rx_sig, cfg)
-    frame, err = parse_frame(bits)
-    if frame is None:
-        return None, err
-    return frame, None
+    if bits is None or len(bits) == 0:
+        return None, "No bits recovered"
+    # Try both polarities by flipping bits if requested
+    bytes_a = bits_to_bytes(bits)
+    if force_invert:
+        bits = 1 - bits
+        bytes_b = bits_to_bytes(bits)
+    else:
+        # Compute alternative candidate as bitwise NOT
+        bits_inv = 1 - bits
+        bytes_b = bits_to_bytes(bits_inv)
+
+    # Choose by signature or text heuristic
+    ext_a = guess_extension(bytes_a)
+    ext_b = guess_extension(bytes_b)
+    # Prefer non-bin over bin; or jpg/png/wav/zip/pdf over txt if magic matches
+    priority = {"jpg":5,"png":5,"gif":4,"pdf":4,"zip":4,"wav":4,"ogg":4,"txt":3,"bin":1}
+    pick_a = priority.get(ext_a,0) >= priority.get(ext_b,0)
+    payload = bytes_a if pick_a else bytes_b
+    ext = ext_a if pick_a else ext_b
+    return {"payload": payload, "extension": ext}, None
 
 if __name__ == "__main__":
     cfg = BPSKConfig()
-    print("Self-test: building signal for dummy bytes...")
-    dummy = b"Hello BPSK";
-    bits = build_frame(dummy, 'txt')
+    print("Self-test: raw bytes loopback...")
+    dummy = b"Hello BPSK without preamble!";
+    bits = bytes_to_bits(dummy)
     sig = modulate(bits, cfg)
-    # add noise
     noisy = sig + 0.02*np.random.randn(len(sig)).astype(np.float32)
-    rec_bits = demodulate(noisy, cfg)
-    frame, err = parse_frame(rec_bits)
+    frame, err = recover_bytes_from_signal_no_preamble(noisy, cfg)
     if frame:
-        print("Recovered payload:", frame['payload'])
+        print("Recovered ext guess:", frame['extension'])
+        print("Recovered payload head:", frame['payload'][:20])
     else:
         print("Error:", err)

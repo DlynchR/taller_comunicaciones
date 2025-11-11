@@ -1,4 +1,4 @@
-# python3 bpsk_rx.py --record 10 --out /tmp/recibidos
+# python3 bpsk_rx.py --record 12 --carrier 6500 --out .
 #!/usr/bin/env python3
 """bpsk_rx.py
 
@@ -27,7 +27,7 @@ from bpsk_common import (
 	BPSKConfig,
 	load_wav,
 	record_audio,
-	recover_file_from_signal,
+	recover_bytes_from_signal_no_preamble,
 )
 
 
@@ -39,6 +39,8 @@ def parse_args():
 	p.add_argument("--carrier", type=float, default=6000.0, help="Carrier frequency Hz")
 	p.add_argument("--symbol_rate", type=int, default=100, help="Symbol rate (sym/s)")
 	p.add_argument("--out", required=True, help="Output directory for recovered file")
+	p.add_argument("--ext", help="Force output extension (e.g., txt, jpg). If omitted, guessed.")
+	p.add_argument("--invert", action="store_true", help="Force polarity inversion if needed.")
 	return p.parse_args()
 
 
@@ -61,14 +63,15 @@ def main():
 		print("Signal too short", file=sys.stderr)
 		return 1
 
-	print("Demodulating...")
-	frame, err = recover_file_from_signal(rx_sig, cfg)
+	print("Demodulating (no preamble)...")
+	frame, err = recover_bytes_from_signal_no_preamble(rx_sig, cfg, force_invert=args.invert)
 	if frame is None:
 		print(f"Decoding error: {err}", file=sys.stderr)
 		return 2
 	outdir = Path(args.out)
 	outdir.mkdir(parents=True, exist_ok=True)
-	outname = outdir / f"received.{frame['extension']}"
+	ext = args.ext if args.ext else frame['extension']
+	outname = outdir / f"received.{ext}"
 	with open(outname, 'wb') as f:
 		f.write(frame['payload'])
 	print(f"Recovered file saved: {outname} ({len(frame['payload'])} bytes)")

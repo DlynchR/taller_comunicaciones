@@ -1,28 +1,3 @@
 Hola mundo! Este es un mensaje de prueba para la transmisión digital.
 El objetivo es enviar este archivo a través del canal de audio.
 Se utilizará modulación BPSK y un protocolo simple.
-hgbfd
-f
-b
-fh
-fh
-hhfdhdh
-fd
-hgbfdhs
-
-sa
-
-
-aaaaaaaaaaaaaaaaa
-
-
-
-aaaaaaaaaaaaaaaaaa
-aaaaaaaaaaaaaaaaaa
-a
-a
-a
-aaaaaaaaaaaaaaaaaa
-aaaaaaaaaaaaaaaaa
-aaaaaaaaaaaaaaaaaa
-aaaaaaaaaaaaaaaaa
