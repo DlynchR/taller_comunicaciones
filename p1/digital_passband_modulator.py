@@ -285,31 +285,47 @@ def encode_data_simple(bits, original_file_size, file_extension):
 
 def decode_data_simple(received_bits):
     """
-    Extrae tamaño, extensión y payload.
+    Extrae tamaño, extensión y datos con validación para evitar errors en decode ascii.
     """
     import struct
 
-    # ➤ Tamaño (4 bytes → 32 bits)
     if len(received_bits) < 32:
         return None, None, None
 
+    # 1) Tamaño del archivo en bytes (4 bytes = 32 bits)
     size_bits = received_bits[:32]
     original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
 
-    # ➤ Longitud extensión (1 byte → 8 bits)
+    # 2) Longitud de la extensión (1 byte = 8 bits)
+    if len(received_bits) < 40:
+        return None, None, None
+
     ext_len_bits = received_bits[32:40]
     ext_len = bits_to_bytes(ext_len_bits)[0]
 
-    # ➤ Extensión ASCII
-    ext_bits = received_bits[40:40 + ext_len*8]
-    file_extension = bits_to_bytes(ext_bits).decode("ascii")
+    # Validación razonable
+    if ext_len == 0 or ext_len > 6:  
+        print("⚠️ Extensión inválida, usando .bin")
+        file_extension = "bin"
+        data_start = 40
+    else:
+        # 3) Extraer extensión
+        ext_bits = received_bits[40:40 + ext_len * 8]
+        raw_ext = bits_to_bytes(ext_bits)
 
-    # ➤ Datos reales
-    data_start = 40 + ext_len*8
+        try:
+            file_extension = raw_ext.decode("ascii")
+        except:
+            print("⚠️ Extensión corrupta, usando .bin")
+            file_extension = "bin"
+
+        data_start = 40 + ext_len * 8
+
+    # 4) Recuperar datos
     expected_bits = original_file_size * 8
     data_bits = received_bits[data_start:data_start + expected_bits]
 
-    # Relleno si llegaron menos bits
+    # Relleno si faltan bits
     if len(data_bits) < expected_bits:
         data_bits += [0] * (expected_bits - len(data_bits))
 
