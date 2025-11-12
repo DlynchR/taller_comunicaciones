@@ -250,25 +250,24 @@ def record_audio(duration, fs):
 
 # --- Protocolo de Transmisión (Simplificado) ---
 
-PREAMBLE_BITS = [1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0] # Secuencia de preámbulo más robusta (32 bits, 4 bytes)
 
-# Secuencia de postámbulo (32 bits). Elegimos un patrón con baja autocorrelación cruzada
-# respecto del preámbulo: inversión del preámbulo y con un corrimiento.
-POSTAMBLE_BITS = [
-    0, 1, 0, 1, 0, 1, 0, 1,
-    0, 0, 0, 1, 1, 1, 0, 0,
-    0, 0, 0, 1, 1, 1, 0, 0,
-    0, 0, 0, 1, 1, 1, 0, 0
-]  # 32 bits
+# ============================================================
+# PREÁMBULO Y POSTÁMBULO
+# ============================================================
 
+# Patrón de sincronización robusto (repetido y balanceado)
+PREAMBLE_BITS = [1,0,1,0,1,1,0,0] * 4   # 32 bits con buena autocorrelación
+POSTAMBLE_BITS = [0,1,0,1,0,0,1,1] * 4  # patrón invertido (también 32 bits)
+
+# ============================================================
+# CODIFICACIÓN DE DATOS
+# ============================================================
 
 def encode_data_simple(bits, original_file_size, file_extension):
     """
     Formato transmitido:
-    [size: 4 bytes] [ext_len: 1 byte] [ext ASCII] [payload bits]
+    [PREAMBLE] [size:4 bytes] [ext_len:1 byte] [ext ASCII] [payload bits] [POSTAMBLE]
     """
-    import struct
-
     # Tamaño del archivo en bytes → 4 bytes big-endian
     size_bytes = struct.pack(">I", original_file_size)
     size_bits = bytes_to_bits(size_bytes)
@@ -276,61 +275,94 @@ def encode_data_simple(bits, original_file_size, file_extension):
     # Extensión
     ext_bytes = file_extension.encode("ascii")
     ext_len = len(ext_bytes)
+    if ext_len > 6:
+        raise ValueError("Extensión demasiado larga (>6 caracteres)")
     ext_len_bits = bytes_to_bits(bytes([ext_len]))
     ext_bits = bytes_to_bits(ext_bytes)
 
-    # Ensamblar
-    return size_bits + ext_len_bits + ext_bits + bits
+    # Armar secuencia final
+    encoded = PREAMBLE_BITS + size_bits + ext_len_bits + ext_bits + bits + POSTAMBLE_BITS
+    return encoded
+
+
+# ============================================================
+# DECODIFICACIÓN ROBUSTA
+# ============================================================
+
+def find_sequence(haystack, needle, max_offset=2000):
+    """Busca una secuencia binaria (needle) dentro de otra (haystack)."""
+    nh = len(haystack)
+    nn = len(needle)
+    for i in range(min(nh - nn, max_offset)):
+        if haystack[i:i+nn] == needle:
+            return i
+    return -1
 
 
 def decode_data_simple(received_bits):
     """
-    Extrae tamaño, extensión y datos con validación para evitar errors en decode ascii.
+    Detecta preámbulo y postámbulo, extrae tamaño, extensión y datos.
     """
     import struct
 
-    if len(received_bits) < 32:
+    # Buscar preámbulo
+    start_idx = find_sequence(received_bits, PREAMBLE_BITS)
+    if start_idx == -1:
+        print("❌ No se encontró preámbulo.")
         return None, None, None
 
-    # 1) Tamaño del archivo en bytes (4 bytes = 32 bits)
-    size_bits = received_bits[:32]
+    # Buscar postámbulo (después del preámbulo)
+    search_region = received_bits[start_idx + len(PREAMBLE_BITS):]
+    end_rel = find_sequence(search_region, POSTAMBLE_BITS)
+    if end_rel == -1:
+        print("❌ No se encontró postámbulo.")
+        return None, None, None
+
+    end_idx = start_idx + len(PREAMBLE_BITS) + end_rel
+    data_region = received_bits[start_idx + len(PREAMBLE_BITS): end_idx]
+
+    # 1) Tamaño (32 bits)
+    if len(data_region) < 32:
+        print("❌ Paquete incompleto (sin tamaño).")
+        return None, None, None
+
+    size_bits = data_region[:32]
     original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
 
-    # 2) Longitud de la extensión (1 byte = 8 bits)
-    if len(received_bits) < 40:
+    # 2) Longitud de extensión (8 bits)
+    if len(data_region) < 40:
+        print("❌ Paquete incompleto (sin longitud de extensión).")
         return None, None, None
 
-    ext_len_bits = received_bits[32:40]
+    ext_len_bits = data_region[32:40]
     ext_len = bits_to_bytes(ext_len_bits)[0]
 
-    # Validación razonable
-    if ext_len == 0 or ext_len > 6:  
+    if ext_len == 0 or ext_len > 6:
         print("⚠️ Extensión inválida, usando .bin")
         file_extension = "bin"
         data_start = 40
     else:
         # 3) Extraer extensión
-        ext_bits = received_bits[40:40 + ext_len * 8]
+        ext_bits = data_region[40:40 + ext_len * 8]
         raw_ext = bits_to_bytes(ext_bits)
-
         try:
             file_extension = raw_ext.decode("ascii")
         except:
             print("⚠️ Extensión corrupta, usando .bin")
             file_extension = "bin"
-
         data_start = 40 + ext_len * 8
 
-    # 4) Recuperar datos
+    # 4) Datos binarios
+    payload_bits = data_region[data_start:]
     expected_bits = original_file_size * 8
-    data_bits = received_bits[data_start:data_start + expected_bits]
 
     # Relleno si faltan bits
-    if len(data_bits) < expected_bits:
-        data_bits += [0] * (expected_bits - len(data_bits))
+    if len(payload_bits) < expected_bits:
+        payload_bits += [0] * (expected_bits - len(payload_bits))
+    elif len(payload_bits) > expected_bits:
+        payload_bits = payload_bits[:expected_bits]
 
-    return data_bits, original_file_size, file_extension
-
+    return payload_bits, original_file_size, file_extension
 
 
 def record_audio_with_tone_trigger(
