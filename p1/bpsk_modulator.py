@@ -28,41 +28,58 @@ def generate_passband_signal(symbols, carrier_freq=CARRIER_FREQ, fs=FS, samples_
     return np.concatenate(waveform).astype(np.float32)
 
 
-def receive_and_demodulate_passband_signal(
-    received_signal, carrier_freq=CARRIER_FREQ, fs=FS,
-    samples_per_symbol=SAMPLES_PER_SYMBOL, num_symbols=None
-):
-    """Demodula una señal pasobanda BPSK y devuelve los símbolos muestreados."""
-    if num_symbols is None:
-        num_symbols = len(received_signal) // samples_per_symbol
-
-    # Multiplicación coherente
-    t = np.arange(len(received_signal)) / fs
-    local_carrier = np.cos(2 * np.pi * carrier_freq * t)
-    demodulated = received_signal * local_carrier
-
-    # Filtro paso bajo (para obtener la banda base)
-    nyq = fs / 2
-    cutoff = min(BAUD_RATE * 1.2, nyq * 0.9)
-    b, a = signal.butter(5, cutoff / nyq, btype='low')
-    baseband = signal.lfilter(b, a, demodulated)
-
-    # Muestreo en el centro de cada símbolo
-    samples = []
-    for i in range(num_symbols):
-        idx = int(i * samples_per_symbol + samples_per_symbol / 2)
-        if idx < len(baseband):
-            samples.append(baseband[idx])
-        else:
-            samples.append(0)
-    return np.array(samples), baseband, demodulated
 
 
-def bpsk_demodulate(samples):
-    """Convierte símbolos BPSK recibidos en bits 0/1."""
-    return [1 if s > 0 else 0 for s in samples]
+
+def receive_and_demodulate_passband_signal(received_signal, carrier_freq, fs, samples_per_symbol, num_symbols):
+    """
+    Demodulación BPSK mejorada con sincronización de símbolo basada en energía.
+    """
+    # Multiplicar por portadora local coherente
+    t_full = np.arange(0, len(received_signal)) / fs
+    local_carrier = np.cos(2 * np.pi * carrier_freq * t_full)
+    baseband = received_signal * local_carrier
+
+    # Filtro pasa bajos para eliminar doble frecuencia
+    nyquist = 0.5 * fs
+    cutoff = min(BAUD_RATE * 0.75 / nyquist, 0.99)
+    b, a = signal.butter(5, cutoff, btype="low")
+    filtered = signal.lfilter(b, a, baseband)
+
+    # Sincronización automática de símbolos
+    # Analizamos la energía por desplazamiento dentro de un símbolo
+    spb = samples_per_symbol
+    offsets = np.arange(0, spb)
+    energies = []
+
+    for offset in offsets:
+        # muestreo cada símbolo con ese offset
+        samples = filtered[offset::spb][:num_symbols]
+        energies.append(np.mean(np.abs(samples)))
+
+    best_offset = int(np.argmax(energies))
+    print(f"⚙️ Mejor offset de muestreo detectado: {best_offset} muestras")
+
+    # Muestrear símbolos en el offset óptimo
+    sampled_symbols = filtered[best_offset::spb][:num_symbols]
+
+    return np.array(sampled_symbols), filtered, baseband
 
 
+
+def bpsk_demodulate(received_symbols):
+    """
+    Demodula símbolos BPSK con corrección automática de fase.
+    Si detecta que la mayoría de los símbolos están invertidos, invierte todo.
+    """
+    symbols = np.real(received_symbols)
+    # Determinar si está invertido (por energía promedio negativa)
+    if np.mean(symbols) < 0:
+        print("🔁 Fase invertida detectada → Corrigiendo (180°)")
+        symbols = -symbols
+
+    demodulated_bits = [1 if s > 0 else 0 for s in symbols]
+    return demodulated_bits
 # ------------------------------------------------------------
 # Audio TX/RX
 # ------------------------------------------------------------

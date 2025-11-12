@@ -128,11 +128,21 @@ class RXApp:
                 return
 
             # 5) Guardar archivo recuperado
+            if file_extension == "bin":
+                # Forzar extensión de texto si el encabezado se corrompió
+                print("⚠️ Extensión inválida, guardando como .txt")
+                file_extension = "txt"
+
             default_name = f"archivo_recibido.{file_extension}"
 
             outname = filedialog.asksaveasfilename(
+                title="Guardar archivo recibido",
                 initialfile=default_name,
-                filetypes=[("Todos los archivos", "*.*")]
+                defaultextension=f".{file_extension}",
+                filetypes=[
+                    ("Archivos de texto", "*.txt"),
+                    ("Todos los archivos", "*.*")
+                ]
             )
             if not outname:
                 return
