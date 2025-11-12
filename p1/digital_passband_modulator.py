@@ -313,7 +313,7 @@ def find_sequence(haystack, needle, min_corr=0.9):
     idx_max = int(np.argmax(corr_norm))
     val_max = corr_norm[idx_max]
 
-    if val_max >= min_corr:
+    if val_max >= (min_corr * 0.9):  # permite detección si hay hasta 10% error
         print(f"🔎 Coincidencia detectada (corr={val_max:.2f}) en índice {idx_max}")
         return idx_max
     else:
@@ -330,7 +330,8 @@ def decode_data_simple(received_bits):
     print(f"📥 Recibidos {len(received_bits)} bits totales")
 
     # Buscar preámbulo
-    start_idx = find_sequence(received_bits, PREAMBLE_BITS)
+    start_idx = find_sequence(received_bits, PREAMBLE_BITS, min_corr=0.75)
+
     if start_idx == -1:
         print("❌ No se encontró preámbulo.")
         return None, None, None
