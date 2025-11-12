@@ -335,19 +335,16 @@ def decode_data_simple(received_bits):
     Detecta preámbulo/postámbulo y extrae tamaño, extensión y datos.
     Retorna (payload_bits, original_file_size, file_extension) o (None, None, None).
     """
-    # IMPORTS LOCALES (asegura que PREAMBLE_BITS, POSTAMBLE_BITS, bits_to_bytes existan)
-    from digital_passband_modulator import PREAMBLE_BITS, POSTAMBLE_BITS, bits_to_bytes
 
     print(f"📥 Recibidos {len(received_bits)} bits totales")
 
-    # --- intentar detectar preámbulo (normal) ---
-    start_idx = find_sequence(received_bits, PREAMBLE_BITS, min_corr=0.75)
-
-    # --- si no aparece, intentar inversión (BPSK 180°) ---
+    # --- 1. Buscar preámbulo (normal e invertido) ---
+    start_idx = find_sequence(received_bits, PREAMBLE_BITS, min_corr=0.70)
     inverted = False
+
     if start_idx == -1:
         inv_bits = [1 - b for b in received_bits]
-        start_idx = find_sequence(inv_bits, PREAMBLE_BITS, min_corr=0.75)
+        start_idx = find_sequence(inv_bits, PREAMBLE_BITS, min_corr=0.70)
         if start_idx != -1:
             print("🔁 Señal detectada invertida (BPSK 180°). Corrigiendo bits.")
             received_bits = inv_bits
@@ -357,71 +354,70 @@ def decode_data_simple(received_bits):
         print("❌ No se encontró preámbulo.")
         return None, None, None
 
-    # --- Buscar postámbulo a partir de la región posterior al preámbulo ---
+    # --- 2. Buscar postámbulo ---
     search_region = received_bits[start_idx + len(PREAMBLE_BITS):]
-    # primero intentar con umbral moderado
-    end_rel = find_sequence(search_region, POSTAMBLE_BITS, min_corr=0.70)
+    end_rel = find_sequence(search_region, POSTAMBLE_BITS, min_corr=0.65)
 
-    # si no se encuentra, intentar postámbulo invertido
     if end_rel == -1:
         inv_post = [1 - b for b in POSTAMBLE_BITS]
-        end_rel = find_sequence(search_region, inv_post, min_corr=0.65)
+        end_rel = find_sequence(search_region, inv_post, min_corr=0.6)
 
-    # fallback: si sigue sin encontrarse, usar el final de la grabación como límite
     if end_rel == -1:
-        print("⚠️ No se encontró postámbulo (corr baja). Usando final de trama registrado como límite.")
-        end_rel = len(search_region)  # toma todo lo que queda
+        print("⚠️ No se encontró postámbulo. Usando final del flujo.")
+        end_rel = len(search_region)
 
     end_idx = start_idx + len(PREAMBLE_BITS) + end_rel
     data_region = received_bits[start_idx + len(PREAMBLE_BITS): end_idx]
-
     print(f"📏 Región útil detectada: {len(data_region)} bits")
 
-    # Validación mínima: tamaño (32 bits) + ext_len (8 bits)
     if len(data_region) < 40:
-        print("❌ Trama incompleta.")
+        print("❌ Trama incompleta (demasiado corta).")
         return None, None, None
 
-    # 1) Tamaño (32 bits big-endian)
-    size_bits = data_region[:32]
-    try:
-        original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
-    except Exception as e:
-        print("❌ Error al leer tamaño:", e)
-        return None, None, None
-
-    # 2) Longitud de extensión (8 bits)
-    ext_len_bits = data_region[32:40]
-    ext_len = bits_to_bytes(ext_len_bits)[0]
-
-    if ext_len == 0 or ext_len > 6:
-        print("⚠️ Extensión inválida, usando .bin")
-        file_extension = "bin"
-        data_start = 40
-    else:
-        # 3) Extraer extensión
-        if len(data_region) < 40 + ext_len * 8:
-            print("❌ Trama incompleta (extensión truncada).")
-            return None, None, None
-        ext_bits = data_region[40:40 + ext_len * 8]
-        raw_ext = bits_to_bytes(ext_bits)
+    # --- 3. Intentar diferentes alineamientos (offsets 0–7 bits) ---
+    for offset in range(8):
         try:
-            file_extension = raw_ext.decode("ascii")
-        except:
-            print("⚠️ Extensión corrupta, usando .bin")
-            file_extension = "bin"
-        data_start = 40 + ext_len * 8
+            size_bits = data_region[offset:offset + 32]
+            if len(size_bits) < 32:
+                continue
+            original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
 
-    # 4) Payload
+            ext_len_bits = data_region[offset + 32: offset + 40]
+            if len(ext_len_bits) < 8:
+                continue
+            ext_len = bits_to_bytes(ext_len_bits)[0]
+
+            if 0 < ext_len <= 6:
+                # Lectura válida
+                ext_bits = data_region[offset + 40: offset + 40 + ext_len * 8]
+                raw_ext = bits_to_bytes(ext_bits)
+                try:
+                    file_extension = raw_ext.decode("ascii").strip().lower()
+                    if not file_extension.isprintable():
+                        raise ValueError
+                except:
+                    file_extension = "bin"
+                data_start = offset + 40 + ext_len * 8
+                break
+        except Exception:
+            continue
+    else:
+        # Si ninguno funcionó
+        print("⚠️ No se pudo alinear correctamente. Usando .txt por defecto.")
+        file_extension = "txt"
+        original_file_size = len(data_region) // 8
+        data_start = 0
+
+    # --- 4. Extraer payload ---
     payload_bits = data_region[data_start:]
     expected_bits = original_file_size * 8
 
-    # Relleno / recorte si hace falta
     if len(payload_bits) < expected_bits:
         payload_bits += [0] * (expected_bits - len(payload_bits))
     elif len(payload_bits) > expected_bits:
         payload_bits = payload_bits[:expected_bits]
 
+    print(f"📦 Tamaño detectado: {original_file_size} bytes | Extensión: .{file_extension}")
     return payload_bits, original_file_size, file_extension
 
 
