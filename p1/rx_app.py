@@ -7,8 +7,9 @@ import threading
 import time
 import pyaudio
 import scipy.signal as signal
+import matplotlib.pyplot as plt
 
-from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio
+from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio, plot_spectrum, plot_time_domain
 from digital_passband_modulator import (
     record_audio_with_tone_trigger,
     receive_and_demodulate_passband_signal,
@@ -40,6 +41,11 @@ class RXApp:
         self.start_tone_freq = 1000.0
         self.stop_tone_freq = 2000.0
 
+        # Variables para almacenar datos de graficación SSB
+        self.last_received_ssb = None
+        self.last_demodulated_ssb = None
+        self.last_fs_ssb = None
+
     def create_widgets(self):
         frame_ssb = ttk.LabelFrame(self.root, text="Recepción SSB / ISB (Audio)")
         frame_ssb.pack(fill="x", padx=8, pady=6)
@@ -53,8 +59,10 @@ class RXApp:
         ttk.Label(frame_ssb, text="Error de frecuencia (Hz):").grid(row=2, column=0, sticky="w")
         ttk.Entry(frame_ssb, textvariable=self.freq_err, width=12).grid(row=2, column=1, sticky="w")
         
-
-        ttk.Button(frame_ssb, text="Escuchar y Demodular SSB", command=self.rx_ssb).grid(row=3, column=0, columnspan=2, pady=6)
+        btn_frame_ssb = ttk.Frame(frame_ssb)
+        btn_frame_ssb.grid(row=3, column=0, columnspan=2, pady=6)
+        ttk.Button(btn_frame_ssb, text="Escuchar y Demodular SSB", command=self.rx_ssb).pack(side="left", padx=6)
+        ttk.Button(btn_frame_ssb, text="Mostrar Gráficas", command=self.show_rx_plots_ssb).pack(side="left", padx=6)
 
         frame_dig = ttk.LabelFrame(self.root, text="Recepción Digital Pasobanda (como audio)")
         frame_dig.pack(fill="x", padx=8, pady=6)
@@ -80,6 +88,11 @@ class RXApp:
                                        phase_error_deg=float(self.phase_err.get()),
                                        freq_error_hz=float(self.freq_err.get()))
             recovered = recovered / (np.max(np.abs(recovered)) + 1e-12)
+
+            # Guardar datos para graficación
+            self.last_received_ssb = rec
+            self.last_demodulated_ssb = recovered
+            self.last_fs_ssb = FS
 
             fname = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV files","*.wav")])
             if fname:
@@ -144,6 +157,38 @@ class RXApp:
         except Exception as e:
             messagebox.showerror("Error RX Digital", str(e))
 
+    def show_rx_plots_ssb(self):
+        """Muestra gráficas de amplitud vs tiempo y espectro para señal SSB/ISB recibida."""
+        try:
+            if self.last_received_ssb is None or self.last_demodulated_ssb is None:
+                messagebox.showwarning("Aviso", "No hay datos para graficar. Ejecuta 'Escuchar y Demodular SSB' primero.")
+                return
+
+            rec = self.last_received_ssb
+            demod = self.last_demodulated_ssb
+            fs = self.last_fs_ssb
+
+            # Crear figura con 4 subplots (2x2)
+            fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+            fig.suptitle('Análisis de Señal SSB/ISB - Receptor', fontsize=14, fontweight='bold')
+
+            # Gráfica 1: Señal recibida modulada en tiempo
+            plot_time_domain(rec, fs, "Señal Recibida Modulada (Amplitud vs Tiempo)", ax=axs[0, 0])
+
+            # Gráfica 2: Espectro de la señal recibida modulada
+            plot_spectrum(rec, fs, "Señal Recibida Modulada (Espectro)", ax=axs[0, 1])
+
+            # Gráfica 3: Señal demodulada en tiempo
+            plot_time_domain(demod, fs, "Señal Demodulada (Amplitud vs Tiempo)", ax=axs[1, 0])
+
+            # Gráfica 4: Espectro de la señal demodulada
+            plot_spectrum(demod, fs, "Señal Demodulada (Espectro)", ax=axs[1, 1])
+
+            plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+            plt.show()
+
+        except Exception as e:
+            messagebox.showerror("Error al graficar", str(e))
 
 
 if __name__ == "__main__":

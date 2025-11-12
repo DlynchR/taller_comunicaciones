@@ -3,9 +3,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
 # Importar funciones proporcionadas por tus módulos
-from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio
+from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio, plot_spectrum, plot_time_domain
 from digital_passband_modulator import file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
 
 class TXApp:
@@ -25,6 +26,11 @@ class TXApp:
         self.digital_use_fec = tk.BooleanVar(value=False)
         self.carrier_digital = tk.DoubleVar(value=CARRIER_FREQ)
         self.fs = FS
+
+        # Variables para almacenar datos de graficación
+        self.last_msg_signal = None
+        self.last_msg_fs = None
+        self.last_modulated_signal = None
 
         self.create_widgets()
 
@@ -68,6 +74,7 @@ class TXApp:
         btn_frame.grid(row=5, column=0, columnspan=3, pady=6)
         ttk.Button(btn_frame, text="Modular y Transmitir", command=self.tx_ssb).pack(side="left", padx=6)
         ttk.Button(btn_frame, text="Guardar WAV Modulado", command=self.save_modulated_ssb).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="Mostrar Gráficas", command=self.show_tx_plots_ssb).pack(side="left", padx=6)
 
         # Digital frame
         frame_dig = ttk.LabelFrame(self.root, text="Transmisión Digital Pasobanda")
@@ -126,6 +133,12 @@ class TXApp:
 
             play_audio(tx_signal, fs)
             self.last_modulated = (tx_signal, fs)
+            
+            # Guardar datos para graficación (sin balizas)
+            self.last_msg_signal = msg
+            self.last_msg_fs = fs
+            self.last_modulated_signal = mod
+            
             messagebox.showinfo("Éxito", "Se transmitió la señal modulada con balizas 1 kHz / 2 kHz.")
         except Exception as e:
             messagebox.showerror("Error TX SSB", str(e))
@@ -190,6 +203,39 @@ class TXApp:
                 messagebox.showinfo("Guardado", f"Señal modulada guardada en: {fname}")
         except Exception as e:
             messagebox.showerror("Error guardar WAV", str(e))
+
+    def show_tx_plots_ssb(self):
+        """Muestra gráficas de amplitud vs tiempo y espectro para SSB/ISB."""
+        try:
+            if self.last_msg_signal is None or self.last_modulated_signal is None:
+                messagebox.showwarning("Aviso", "No hay datos para graficar. Ejecuta 'Modular y Transmitir' primero.")
+                return
+
+            msg = self.last_msg_signal
+            mod = self.last_modulated_signal
+            fs = self.last_msg_fs
+
+            # Crear figura con 4 subplots (2x2)
+            fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+            fig.suptitle('Análisis de Señal SSB/ISB - Transmisor', fontsize=14, fontweight='bold')
+
+            # Gráfica 1: Mensaje original en tiempo
+            plot_time_domain(msg, fs, "Mensaje Original (Amplitud vs Tiempo)", ax=axs[0, 0])
+
+            # Gráfica 2: Espectro del mensaje original
+            plot_spectrum(msg, fs, "Mensaje Original (Espectro)", ax=axs[0, 1])
+
+            # Gráfica 3: Señal modulada en tiempo
+            plot_time_domain(mod, fs, "Señal Modulada (Amplitud vs Tiempo)", ax=axs[1, 0])
+
+            # Gráfica 4: Espectro de la señal modulada
+            plot_spectrum(mod, fs, "Señal Modulada (Espectro)", ax=axs[1, 1])
+
+            plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+            plt.show()
+
+        except Exception as e:
+            messagebox.showerror("Error al graficar", str(e))
 
 if __name__ == "__main__":
     root = tk.Tk()
