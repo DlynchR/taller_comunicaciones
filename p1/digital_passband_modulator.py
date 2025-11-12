@@ -289,74 +289,108 @@ def encode_data_simple(bits, original_file_size, file_extension):
 # ============================================================
 
 
-def find_sequence(haystack, needle, min_corr=0.9):
-    """
-    Busca 'needle' dentro de 'haystack' usando correlación binaria (-1/+1).
-    Devuelve el índice del inicio o -1 si no hay coincidencia.
-    """
-    haystack = np.array(haystack)
-    needle = np.array(needle)
+import numpy as np
+import struct
 
-    nh = len(haystack)
-    nn = len(needle)
+def find_sequence(haystack, needle, min_corr=0.75):
+    """
+    Busca 'needle' dentro de 'haystack' usando correlación bipolar (-1/+1).
+    Devuelve el índice del inicio o -1 si no hay coincidencia suficientemente buena.
+    min_corr: umbral de correlación normalizada (0..1)
+    """
+    hay = np.array(haystack, dtype=np.int8)
+    ned = np.array(needle, dtype=np.int8)
+
+    nh = len(hay)
+    nn = len(ned)
     if nh < nn:
         return -1
 
-    # Convertimos 0→1, 1→-1 (bipolar)
-    h = 1 - 2 * haystack
-    n = 1 - 2 * needle
+    # Convertir a bipolar: 0 -> +1, 1 -> -1 (ocho: 1-2*b)
+    hb = 1 - 2 * hay
+    nb = 1 - 2 * ned
 
-    # Correlación deslizante
-    corr = np.correlate(h, n, mode="valid")
+    corr = np.correlate(hb, nb, mode="valid")  # longitud nh-nn+1
+    # normalizar por longitud del patrón para obtener valor en [-1, +1]
     corr_norm = corr / nn
 
     idx_max = int(np.argmax(corr_norm))
-    val_max = corr_norm[idx_max]
+    val_max = float(corr_norm[idx_max])
 
-    if val_max >= (min_corr * 0.9):  # permite detección si hay hasta 10% error
+    # Depuración mínima
+    # print(f"find_sequence: mejor corr = {val_max:.3f} en idx {idx_max}")
+
+    if val_max >= min_corr:
+        # imprimir para diagnóstico (opcional)
         print(f"🔎 Coincidencia detectada (corr={val_max:.2f}) en índice {idx_max}")
         return idx_max
     else:
-        print(f"⚠️ Correlación máxima {val_max:.2f} < {min_corr}")
+        # imprimir para diagnóstico (opcional)
+        print(f"⚠️ Correlación máxima {val_max:.2f} < {min_corr:.2f}")
         return -1
 
 
 def decode_data_simple(received_bits):
     """
     Detecta preámbulo/postámbulo y extrae tamaño, extensión y datos.
+    Retorna (payload_bits, original_file_size, file_extension) o (None, None, None).
     """
+    # IMPORTS LOCALES (asegura que PREAMBLE_BITS, POSTAMBLE_BITS, bits_to_bytes existan)
     from digital_passband_modulator import PREAMBLE_BITS, POSTAMBLE_BITS, bits_to_bytes
 
     print(f"📥 Recibidos {len(received_bits)} bits totales")
 
-    # Buscar preámbulo
+    # --- intentar detectar preámbulo (normal) ---
     start_idx = find_sequence(received_bits, PREAMBLE_BITS, min_corr=0.75)
+
+    # --- si no aparece, intentar inversión (BPSK 180°) ---
+    inverted = False
+    if start_idx == -1:
+        inv_bits = [1 - b for b in received_bits]
+        start_idx = find_sequence(inv_bits, PREAMBLE_BITS, min_corr=0.75)
+        if start_idx != -1:
+            print("🔁 Señal detectada invertida (BPSK 180°). Corrigiendo bits.")
+            received_bits = inv_bits
+            inverted = True
 
     if start_idx == -1:
         print("❌ No se encontró preámbulo.")
         return None, None, None
 
-    # Buscar postámbulo a partir del preámbulo
+    # --- Buscar postámbulo a partir de la región posterior al preámbulo ---
     search_region = received_bits[start_idx + len(PREAMBLE_BITS):]
-    end_rel = find_sequence(search_region, POSTAMBLE_BITS)
+    # primero intentar con umbral moderado
+    end_rel = find_sequence(search_region, POSTAMBLE_BITS, min_corr=0.70)
+
+    # si no se encuentra, intentar postámbulo invertido
     if end_rel == -1:
-        print("❌ No se encontró postámbulo.")
-        return None, None, None
+        inv_post = [1 - b for b in POSTAMBLE_BITS]
+        end_rel = find_sequence(search_region, inv_post, min_corr=0.65)
+
+    # fallback: si sigue sin encontrarse, usar el final de la grabación como límite
+    if end_rel == -1:
+        print("⚠️ No se encontró postámbulo (corr baja). Usando final de trama registrado como límite.")
+        end_rel = len(search_region)  # toma todo lo que queda
 
     end_idx = start_idx + len(PREAMBLE_BITS) + end_rel
     data_region = received_bits[start_idx + len(PREAMBLE_BITS): end_idx]
 
-    print(f"📏 Región útil: {len(data_region)} bits")
+    print(f"📏 Región útil detectada: {len(data_region)} bits")
 
+    # Validación mínima: tamaño (32 bits) + ext_len (8 bits)
     if len(data_region) < 40:
         print("❌ Trama incompleta.")
         return None, None, None
 
-    # 1) Tamaño
+    # 1) Tamaño (32 bits big-endian)
     size_bits = data_region[:32]
-    original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
+    try:
+        original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
+    except Exception as e:
+        print("❌ Error al leer tamaño:", e)
+        return None, None, None
 
-    # 2) Longitud de extensión
+    # 2) Longitud de extensión (8 bits)
     ext_len_bits = data_region[32:40]
     ext_len = bits_to_bytes(ext_len_bits)[0]
 
@@ -365,6 +399,10 @@ def decode_data_simple(received_bits):
         file_extension = "bin"
         data_start = 40
     else:
+        # 3) Extraer extensión
+        if len(data_region) < 40 + ext_len * 8:
+            print("❌ Trama incompleta (extensión truncada).")
+            return None, None, None
         ext_bits = data_region[40:40 + ext_len * 8]
         raw_ext = bits_to_bytes(ext_bits)
         try:
@@ -374,16 +412,18 @@ def decode_data_simple(received_bits):
             file_extension = "bin"
         data_start = 40 + ext_len * 8
 
-    # 3) Payload
+    # 4) Payload
     payload_bits = data_region[data_start:]
     expected_bits = original_file_size * 8
 
+    # Relleno / recorte si hace falta
     if len(payload_bits) < expected_bits:
         payload_bits += [0] * (expected_bits - len(payload_bits))
     elif len(payload_bits) > expected_bits:
         payload_bits = payload_bits[:expected_bits]
 
     return payload_bits, original_file_size, file_extension
+
 
 
 
