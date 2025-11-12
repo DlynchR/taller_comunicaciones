@@ -9,16 +9,20 @@ import pyaudio
 import scipy.signal as signal
 
 from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio
-from digital_passband_modulator import (
+# rx_app.py
+from bpsk_modulator import (
     record_audio_with_tone_trigger,
     receive_and_demodulate_passband_signal,
-    decode_data_simple,   # ← usamos este
     bpsk_demodulate,
-    bits_to_file,
     FS,
     CARRIER_FREQ,
-    SAMPLES_PER_SYMBOL
+    SAMPLES_PER_SYMBOL,
 )
+from digital_passband_modulator import (
+    decode_data_simple,
+    bits_to_file,
+)
+
 
 
 class RXApp:

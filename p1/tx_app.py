@@ -3,10 +3,22 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import numpy as np
 import os
+# tx_app.py
+from bpsk_modulator import (
+    bpsk_modulate,
+    generate_passband_signal,
+    transmit_audio,
+    FS,
+    CARRIER_FREQ,
+    SAMPLES_PER_SYMBOL,
+)
+from digital_passband_modulator import (
+    file_to_bits,
+    encode_data_simple,
+)
 
 # Importar funciones proporcionadas por tus módulos
 from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio
-from digital_passband_modulator import file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
 
 class TXApp:
     def __init__(self, root):
