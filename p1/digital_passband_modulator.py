@@ -252,15 +252,14 @@ def record_audio(duration, fs):
 
 
 # ============================================================
-# PREÁMBULO Y POSTÁMBULO
+# PREÁMBULO Y POSTÁMBULO ROBUSTOS
 # ============================================================
 
-# Patrón de sincronización robusto (repetido y balanceado)
-PREAMBLE_BITS = [1,0,1,0,1,1,0,0] * 4   # 32 bits con buena autocorrelación
-POSTAMBLE_BITS = [0,1,0,1,0,0,1,1] * 4  # patrón invertido (también 32 bits)
+PREAMBLE_BITS = [1,0,1,0,1,1,0,0]*4   # 32 bits
+POSTAMBLE_BITS = [0,1,0,1,0,0,1,1]*4  # 32 bits
 
 # ============================================================
-# CODIFICACIÓN DE DATOS
+# CODIFICACIÓN
 # ============================================================
 
 def encode_data_simple(bits, original_file_size, file_extension):
@@ -280,7 +279,7 @@ def encode_data_simple(bits, original_file_size, file_extension):
     ext_len_bits = bytes_to_bits(bytes([ext_len]))
     ext_bits = bytes_to_bits(ext_bytes)
 
-    # Armar secuencia final
+    # Armar trama completa
     encoded = PREAMBLE_BITS + size_bits + ext_len_bits + ext_bits + bits + POSTAMBLE_BITS
     return encoded
 
@@ -289,7 +288,7 @@ def encode_data_simple(bits, original_file_size, file_extension):
 # DECODIFICACIÓN ROBUSTA
 # ============================================================
 
-def find_sequence(haystack, needle, max_offset=2000):
+def find_sequence(haystack, needle, max_offset=3000):
     """Busca una secuencia binaria (needle) dentro de otra (haystack)."""
     nh = len(haystack)
     nn = len(needle)
@@ -301,7 +300,7 @@ def find_sequence(haystack, needle, max_offset=2000):
 
 def decode_data_simple(received_bits):
     """
-    Detecta preámbulo y postámbulo, extrae tamaño, extensión y datos.
+    Detecta preámbulo/postámbulo y extrae tamaño, extensión y datos.
     """
     import struct
 
@@ -311,7 +310,7 @@ def decode_data_simple(received_bits):
         print("❌ No se encontró preámbulo.")
         return None, None, None
 
-    # Buscar postámbulo (después del preámbulo)
+    # Buscar postámbulo después del preámbulo
     search_region = received_bits[start_idx + len(PREAMBLE_BITS):]
     end_rel = find_sequence(search_region, POSTAMBLE_BITS)
     if end_rel == -1:
@@ -321,18 +320,13 @@ def decode_data_simple(received_bits):
     end_idx = start_idx + len(PREAMBLE_BITS) + end_rel
     data_region = received_bits[start_idx + len(PREAMBLE_BITS): end_idx]
 
-    # 1) Tamaño (32 bits)
-    if len(data_region) < 32:
-        print("❌ Paquete incompleto (sin tamaño).")
+    # --- Decodificar encabezado ---
+    if len(data_region) < 40:
+        print("❌ Trama incompleta.")
         return None, None, None
 
     size_bits = data_region[:32]
     original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
-
-    # 2) Longitud de extensión (8 bits)
-    if len(data_region) < 40:
-        print("❌ Paquete incompleto (sin longitud de extensión).")
-        return None, None, None
 
     ext_len_bits = data_region[32:40]
     ext_len = bits_to_bytes(ext_len_bits)[0]
@@ -342,7 +336,6 @@ def decode_data_simple(received_bits):
         file_extension = "bin"
         data_start = 40
     else:
-        # 3) Extraer extensión
         ext_bits = data_region[40:40 + ext_len * 8]
         raw_ext = bits_to_bytes(ext_bits)
         try:
@@ -352,17 +345,16 @@ def decode_data_simple(received_bits):
             file_extension = "bin"
         data_start = 40 + ext_len * 8
 
-    # 4) Datos binarios
     payload_bits = data_region[data_start:]
     expected_bits = original_file_size * 8
 
-    # Relleno si faltan bits
     if len(payload_bits) < expected_bits:
         payload_bits += [0] * (expected_bits - len(payload_bits))
     elif len(payload_bits) > expected_bits:
         payload_bits = payload_bits[:expected_bits]
 
     return payload_bits, original_file_size, file_extension
+
 
 
 def record_audio_with_tone_trigger(
