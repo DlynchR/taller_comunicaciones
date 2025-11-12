@@ -288,21 +288,46 @@ def encode_data_simple(bits, original_file_size, file_extension):
 # DECODIFICACIÓN ROBUSTA
 # ============================================================
 
-def find_sequence(haystack, needle, max_offset=3000):
-    """Busca una secuencia binaria (needle) dentro de otra (haystack)."""
+
+def find_sequence(haystack, needle, min_corr=0.9):
+    """
+    Busca 'needle' dentro de 'haystack' usando correlación binaria (-1/+1).
+    Devuelve el índice del inicio o -1 si no hay coincidencia.
+    """
+    haystack = np.array(haystack)
+    needle = np.array(needle)
+
     nh = len(haystack)
     nn = len(needle)
-    for i in range(min(nh - nn, max_offset)):
-        if haystack[i:i+nn] == needle:
-            return i
-    return -1
+    if nh < nn:
+        return -1
+
+    # Convertimos 0→1, 1→-1 (bipolar)
+    h = 1 - 2 * haystack
+    n = 1 - 2 * needle
+
+    # Correlación deslizante
+    corr = np.correlate(h, n, mode="valid")
+    corr_norm = corr / nn
+
+    idx_max = int(np.argmax(corr_norm))
+    val_max = corr_norm[idx_max]
+
+    if val_max >= min_corr:
+        print(f"🔎 Coincidencia detectada (corr={val_max:.2f}) en índice {idx_max}")
+        return idx_max
+    else:
+        print(f"⚠️ Correlación máxima {val_max:.2f} < {min_corr}")
+        return -1
 
 
 def decode_data_simple(received_bits):
     """
     Detecta preámbulo/postámbulo y extrae tamaño, extensión y datos.
     """
-    import struct
+    from digital_passband_modulator import PREAMBLE_BITS, POSTAMBLE_BITS, bits_to_bytes
+
+    print(f"📥 Recibidos {len(received_bits)} bits totales")
 
     # Buscar preámbulo
     start_idx = find_sequence(received_bits, PREAMBLE_BITS)
@@ -310,7 +335,7 @@ def decode_data_simple(received_bits):
         print("❌ No se encontró preámbulo.")
         return None, None, None
 
-    # Buscar postámbulo después del preámbulo
+    # Buscar postámbulo a partir del preámbulo
     search_region = received_bits[start_idx + len(PREAMBLE_BITS):]
     end_rel = find_sequence(search_region, POSTAMBLE_BITS)
     if end_rel == -1:
@@ -320,14 +345,17 @@ def decode_data_simple(received_bits):
     end_idx = start_idx + len(PREAMBLE_BITS) + end_rel
     data_region = received_bits[start_idx + len(PREAMBLE_BITS): end_idx]
 
-    # --- Decodificar encabezado ---
+    print(f"📏 Región útil: {len(data_region)} bits")
+
     if len(data_region) < 40:
         print("❌ Trama incompleta.")
         return None, None, None
 
+    # 1) Tamaño
     size_bits = data_region[:32]
     original_file_size = struct.unpack(">I", bits_to_bytes(size_bits))[0]
 
+    # 2) Longitud de extensión
     ext_len_bits = data_region[32:40]
     ext_len = bits_to_bytes(ext_len_bits)[0]
 
@@ -345,6 +373,7 @@ def decode_data_simple(received_bits):
             file_extension = "bin"
         data_start = 40 + ext_len * 8
 
+    # 3) Payload
     payload_bits = data_region[data_start:]
     expected_bits = original_file_size * 8
 
