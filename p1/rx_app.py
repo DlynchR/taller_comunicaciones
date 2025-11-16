@@ -1,194 +1,191 @@
-# rx_app.py
+
+# rx_app.py (corregido)
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import numpy as np
-import os
-import threading
-import time
-import pyaudio
-import scipy.signal as signal
 import matplotlib.pyplot as plt
+import os
 
-from ssb_isb_simulator import ssb_demodulate, save_audio, load_audio, play_audio, plot_spectrum, plot_time_domain
+# Importar funciones del módulo digital actualizado
 from digital_passband_modulator import (
+    FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL,
     record_audio_with_tone_trigger,
     receive_and_demodulate_passband_signal,
-    decode_data_simple,   # ← usamos este
     bpsk_demodulate,
+    decode_data_with_protocol,
     bits_to_file,
-    FS,
-    CARRIER_FREQ,
-    SAMPLES_PER_SYMBOL
+    plot_time_domain,
+    plot_spectrum,
+    calculate_ber
 )
-
 
 class RXApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("RX - Receptor (SSB/ISB + Pasobanda Digital)")
+        self.root.title("RX - Receptor Digital Pasobanda (BPSK)")
 
-        # Parámetros SSB
-        self.fc_ssb = tk.DoubleVar(value=15000.0)
-        self.phase_err = tk.DoubleVar(value=0.0)
-        self.freq_err = tk.DoubleVar(value=0.0)
-
-        # Parámetros digitales
-        self.carrier_dig = tk.DoubleVar(value=CARRIER_FREQ)
+        self.save_folder = tk.StringVar(value=os.getcwd())
+        self.original_file_for_ber = tk.StringVar()  # para comparar BER si se desea
+        self.last_received = None  # tupla: (recorded_signal, fs)
+        self.last_sampled_symbols = None
+        self.last_filtered = None
+        self.last_demod = None
+        self.last_bits = None
+        self.last_payload_bits = None
+        self.last_original_size = None
 
         self.create_widgets()
 
-        # 🔊 Parámetros de tonos (puedes cambiarlos aquí)
-        self.start_tone_freq = 1000.0
-        self.stop_tone_freq = 2000.0
-
-        # Variables para almacenar datos de graficación SSB
-        self.last_received_ssb = None
-        self.last_demodulated_ssb = None
-        self.last_fs_ssb = None
-
     def create_widgets(self):
-        frame_ssb = ttk.LabelFrame(self.root, text="Recepción SSB / ISB (Audio)")
-        frame_ssb.pack(fill="x", padx=8, pady=6)
+        frame_controls = ttk.LabelFrame(self.root, text="Controles RX")
+        frame_controls.pack(fill="x", padx=8, pady=6)
 
-        ttk.Label(frame_ssb, text="Frecuencia portadora SSB (Hz):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame_ssb, textvariable=self.fc_ssb, width=12).grid(row=0, column=1, sticky="w")
+        ttk.Label(frame_controls, text="Carpeta para guardar:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame_controls, textvariable=self.save_folder, width=50).grid(row=0, column=1)
+        ttk.Button(frame_controls, text="Seleccionar carpeta", command=self.select_folder).grid(row=0, column=2)
 
-        ttk.Label(frame_ssb, text="Error de fase (deg):").grid(row=1, column=0, sticky="w")
-        ttk.Entry(frame_ssb, textvariable=self.phase_err, width=12).grid(row=1, column=1, sticky="w")
+        ttk.Label(frame_controls, text="Archivo original (opcional, para BER):").grid(row=1, column=0, sticky="w")
+        ttk.Entry(frame_controls, textvariable=self.original_file_for_ber, width=50).grid(row=1, column=1)
+        ttk.Button(frame_controls, text="Seleccionar archivo", command=self.select_original_for_ber).grid(row=1, column=2)
 
-        ttk.Label(frame_ssb, text="Error de frecuencia (Hz):").grid(row=2, column=0, sticky="w")
-        ttk.Entry(frame_ssb, textvariable=self.freq_err, width=12).grid(row=2, column=1, sticky="w")
-        
-        btn_frame_ssb = ttk.Frame(frame_ssb)
-        btn_frame_ssb.grid(row=3, column=0, columnspan=2, pady=6)
-        ttk.Button(btn_frame_ssb, text="Escuchar y Demodular SSB", command=self.rx_ssb).pack(side="left", padx=6)
-        ttk.Button(btn_frame_ssb, text="Mostrar Gráficas", command=self.show_rx_plots_ssb).pack(side="left", padx=6)
+        btn_frame = ttk.Frame(frame_controls)
+        btn_frame.grid(row=2, column=0, columnspan=3, pady=6)
+        ttk.Button(btn_frame, text="Escuchar y Demodular Digital", command=self.listen_and_demod).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="Guardar archivo recuperado", command=self.save_recovered_file).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="Mostrar gráficas RX", command=self.show_rx_plots).pack(side="left", padx=6)
 
-        frame_dig = ttk.LabelFrame(self.root, text="Recepción Digital Pasobanda (como audio)")
-        frame_dig.pack(fill="x", padx=8, pady=6)
+    def select_folder(self):
+        d = filedialog.askdirectory()
+        if d:
+            self.save_folder.set(d)
 
-        ttk.Label(frame_dig, text="Frecuencia portadora digital (Hz):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame_dig, textvariable=self.carrier_dig, width=12).grid(row=0, column=1, sticky="w")
+    def select_original_for_ber(self):
+        p = filedialog.askopenfilename()
+        if p:
+            self.original_file_for_ber.set(p)
 
-        ttk.Button(frame_dig, text="Escuchar y Demodular Digital", command=self.rx_digital).grid(row=1, column=0, columnspan=2, pady=6)
-
-    def rx_ssb(self):
+    def listen_and_demod(self):
         try:
-            rec = record_audio_with_tone_trigger(
-                fs=FS,
-                start_tone_freq=self.start_tone_freq,
-                stop_tone_freq=self.stop_tone_freq
-            )
-            if rec is None:
-                messagebox.showerror("Error", "No se detectó tono de inicio/fin.")
+            # Grabar usando el trigger de tono (espera tono de inicio y stop tone para terminar)
+            print("Iniciando grabación (esperando tono de inicio)...")
+            recorded = record_audio_with_tone_trigger(FS)
+            if recorded is None or len(recorded) == 0:
+                messagebox.showwarning("Grabación", "No se registró señal o no se detectó el tono de inicio.")
                 return
-
-            fc = float(self.fc_ssb.get())
-            recovered = ssb_demodulate(rec, FS, fc,
-                                       phase_error_deg=float(self.phase_err.get()),
-                                       freq_error_hz=float(self.freq_err.get()))
-            recovered = recovered / (np.max(np.abs(recovered)) + 1e-12)
-
-            # Guardar datos para graficación
-            self.last_received_ssb = rec
-            self.last_demodulated_ssb = recovered
-            self.last_fs_ssb = FS
-
-            fname = filedialog.asksaveasfilename(defaultextension=".wav", filetypes=[("WAV files","*.wav")])
-            if fname:
-                save_audio(fname, recovered, FS)
-                if messagebox.askyesno("Reproducir", "¿Reproducir audio?"):
-                    play_audio(recovered, FS)
-
+            self.last_received = (recorded, FS)
+            # Demodulación pasobanda -> baseband -> símbolos muestreados
+            # Estimar máximo de símbolos en la grabación
+            est_symbols = max(1, int(len(recorded) / SAMPLES_PER_SYMBOL))
+            sampled_symbols, filtered_bb, demodulated_bb = receive_and_demodulate_passband_signal(
+                recorded, CARRIER_FREQ, FS, SAMPLES_PER_SYMBOL, est_symbols
+            )
+            self.last_sampled_symbols = sampled_symbols
+            self.last_filtered = filtered_bb
+            self.last_demod = demodulated_bb
+            # Decidir bits
+            bits = bpsk_demodulate(sampled_symbols)
+            self.last_bits = bits
+            # Intentar decodificar protocolo/frame
+            payload_bits, original_size = decode_data_with_protocol(bits)
+            if payload_bits is None:
+                messagebox.showwarning("Decodificación", "No se pudo recuperar una trama válida (CRC/preambulo). Aún se muestran las gráficas de señal para diagnóstico.")
+                self.last_payload_bits = None
+                self.last_original_size = None
+            else:
+                self.last_payload_bits = payload_bits
+                self.last_original_size = original_size
+                messagebox.showinfo("Decodificación", f"Trama recuperada. Tamaño original aproximado: {original_size} bytes.")
+            return
         except Exception as e:
-            messagebox.showerror("Error RX SSB", str(e))
+            messagebox.showerror("Error RX", str(e))
 
-    def rx_digital(self):
-        """Recepción digital completa: tono inicio → grabar → tono fin → BPSK → protocolo → reconstrucción de archivo."""
+    def save_recovered_file(self):
         try:
-            carrier = float(self.carrier_dig.get())
-
-            # 1) GRABAR POR TONOS
-            rec = record_audio_with_tone_trigger(
-                fs=FS,
-                start_tone_freq=self.start_tone_freq,
-                stop_tone_freq=self.stop_tone_freq
-            )
-            if rec is None or len(rec) < SAMPLES_PER_SYMBOL * 20:
-                messagebox.showerror("Error", "La grabación fue muy corta o no se detectaron tonos correctamente.")
+            if self.last_payload_bits is None:
+                messagebox.showwarning("Guardar", "No hay un archivo recuperado válido para guardar.")
                 return
-
-            # 2) DEMODULACIÓN COMPLETA PASOBANDA
-            est_num_symbols = max(1, int(len(rec) / SAMPLES_PER_SYMBOL))
-            sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(
-                rec, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols
-            )
-
-            # 3) BPSK → Bits
-            demod_bits = bpsk_demodulate(sampled_symbols)
-
-            # 4) Decodificación de protocolo (encuentra preámbulo y tamaño automáticamente)
-
-            recovered_bits, original_size = decode_data_simple(demod_bits)
-
-            if recovered_bits is None:
-                messagebox.showerror("Error en protocolo", "No se pudo detectar el preámbulo o el tamaño del archivo.")
+            # Preguntar nombre
+            suggested = os.path.join(self.save_folder.get(), "recovered.bin")
+            fname = filedialog.asksaveasfilename(defaultextension=".bin", initialfile=suggested, filetypes=[("BIN files","*.bin"),("All files","*.*")])
+            if not fname:
                 return
-
-            # 5) Guardar archivo recuperado
-            outname = filedialog.asksaveasfilename(
-                defaultextension="",
-                filetypes=[
-                    ("Archivos binarios", "*.bin"),
-                    ("Texto", "*.txt"),
-                    ("Imagen PNG", "*.png"),
-                    ("Imagen JPG", "*.jpg"),
-                    ("Todos los archivos", "*.*")
-                ],
-                title="Guardar archivo recuperado"
-            )
-            if not outname:
-                return
-
-            bits_to_file(recovered_bits, outname)
-
-            messagebox.showinfo("Archivo guardado", f"✅ Archivo reconstruido y guardado:\n{outname}")
-
+            bits_to_save = self.last_payload_bits
+            bits_to_file(bits_to_save, fname)
+            messagebox.showinfo("Guardado", f"Archivo recuperado guardado en: {fname}")
         except Exception as e:
-            messagebox.showerror("Error RX Digital", str(e))
+            messagebox.showerror("Error guardar", str(e))
 
-    def show_rx_plots_ssb(self):
-        """Muestra gráficas de amplitud vs tiempo y espectro para señal SSB/ISB recibida."""
+    def show_rx_plots(self):
         try:
-            if self.last_received_ssb is None or self.last_demodulated_ssb is None:
-                messagebox.showwarning("Aviso", "No hay datos para graficar. Ejecuta 'Escuchar y Demodular SSB' primero.")
+            if self.last_received is None:
+                messagebox.showwarning("Graficar", "No hay señal grabada. Ejecuta 'Escuchar y Demodular Digital' primero.")
                 return
+            recorded, fs = self.last_received
+            sampled = self.last_sampled_symbols if self.last_sampled_symbols is not None else np.array([])
+            filtered = self.last_filtered if self.last_filtered is not None else np.array([])
+            demod = self.last_demod if self.last_demod is not None else np.array([])
 
-            rec = self.last_received_ssb
-            demod = self.last_demodulated_ssb
-            fs = self.last_fs_ssb
+            fig, axs = plt.subplots(3, 2, figsize=(14, 10))
+            fig.suptitle("Análisis RX - Señal grabada y baseband", fontsize=14, fontweight='bold')
 
-            # Crear figura con 4 subplots (2x2)
-            fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-            fig.suptitle('Análisis de Señal SSB/ISB - Receptor', fontsize=14, fontweight='bold')
+            # 1: Señal grabada (tiempo)
+            plot_time_domain(recorded, fs, "Señal grabada (Tiempo)", ax=axs[0,0])
+            # 2: Espectro señal grabada
+            plot_spectrum(recorded, fs, "Señal grabada (Espectro)", ax=axs[0,1])
 
-            # Gráfica 1: Señal recibida modulada en tiempo
-            plot_time_domain(rec, fs, "Señal Recibida Modulada (Amplitud vs Tiempo)", ax=axs[0, 0])
+            # 3: Baseband demodulado (tiempo)
+            if len(demod)>0:
+                plot_time_domain(demod, fs, "Baseband demodulado (Producto con cos)", ax=axs[1,0])
+                plot_spectrum(demod, fs, "Baseband demodulado (Espectro)", ax=axs[1,1])
+            else:
+                axs[1,0].text(0.5,0.5,"No hay baseband demodulado", ha='center')
+                axs[1,1].text(0.5,0.5,"No hay baseband demodulado", ha='center')
 
-            # Gráfica 2: Espectro de la señal recibida modulada
-            plot_spectrum(rec, fs, "Señal Recibida Modulada (Espectro)", ax=axs[0, 1])
-
-            # Gráfica 3: Señal demodulada en tiempo
-            plot_time_domain(demod, fs, "Señal Demodulada (Amplitud vs Tiempo)", ax=axs[1, 0])
-
-            # Gráfica 4: Espectro de la señal demodulada
-            plot_spectrum(demod, fs, "Señal Demodulada (Espectro)", ax=axs[1, 1])
+            # 5: Filtered baseband and sampled symbols (zoom)
+            if len(filtered)>0:
+                # mostrar primera parte
+                plot_time_domain(filtered[:min(len(filtered), fs//2)], fs, "Filtered baseband (Zoom 0.5s)", ax=axs[2,0])
+                # Diagrama de ojo aproximado: tomar una porción y plegarla por símbolo
+                if len(sampled)>5:
+                    # construir eye by slicing filtered into symbol intervals
+                    sym = SAMPLES_PER_SYMBOL
+                    n_syms = min(200, len(filtered)//sym - 2)
+                    if n_syms>2:
+                        eye_matrix = np.array([filtered[i*sym:(i+1)*sym] for i in range(2, 2+n_syms)])
+                        eye = eye_matrix.T
+                        axs[2,1].plot(eye)
+                        axs[2,1].set_title("Diagrama de ojo (apilado por símbolo)")
+                        axs[2,1].set_xlabel("Muestras dentro de símbolo")
+                    else:
+                        axs[2,1].text(0.5,0.5,"No hay suficientes símbolos para eye diagram", ha='center')
+                else:
+                    axs[2,1].text(0.5,0.5,"No hay suficientes símbolos para eye diagram", ha='center')
+            else:
+                axs[2,0].text(0.5,0.5,"No hay señal filtrada", ha='center')
+                axs[2,1].text(0.5,0.5,"No hay eye diagram", ha='center')
 
             plt.tight_layout(rect=[0, 0.03, 1, 0.97])
             plt.show()
 
+            # Mostrar BER si el usuario proveyó archivo original para comparar
+            if self.original_file_for_ber.get() and self.last_payload_bits is not None:
+                orig_bits = None
+                try:
+                    with open(self.original_file_for_ber.get(), 'rb') as f:
+                        orig_bytes = f.read()
+                    # convertir a bits
+                    orig_bits = []
+                    for b in orig_bytes:
+                        for i in range(8):
+                            orig_bits.append((b >> (7-i)) & 1)
+                except Exception as e:
+                    orig_bits = None
+                if orig_bits is not None:
+                    ber = calculate_ber(orig_bits, self.last_payload_bits)
+                    messagebox.showinfo("BER", f"BER aproximado (comparando con archivo original seleccionado): {ber:.6f}")
+            return
         except Exception as e:
-            messagebox.showerror("Error al graficar", str(e))
+            messagebox.showerror("Error graficar", str(e))
 
 
 if __name__ == "__main__":
