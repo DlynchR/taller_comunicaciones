@@ -1,93 +1,50 @@
-# tx_simple.py
-# Transmisor digital pasobanda simple (compatible con rx_app.py corregido)
-
+# tx_simple_fsk.py - simple FSK transmitter GUI
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from digital_passband_modulator import (
-    transmit_file,  
-    FS, 
-    CARRIER_FREQ
-)
+from digital_passband_modulator_fsk import transmit_file_fsk, FS, FREQ_0, FREQ_1
 
 class SimpleTX:
     def __init__(self, root):
         self.root = root
-        self.root.title("TX Digital Simple (BPSK Pasobanda)")
+        self.root.title("TX Simple FSK")
+        self.path = tk.StringVar()
+        self.f0 = tk.DoubleVar(value=FREQ_0)
+        self.f1 = tk.DoubleVar(value=FREQ_1)
+        self.fs = FS
+        self.create()
 
-        self.file_path = tk.StringVar()
-        self.use_fec = tk.BooleanVar(value=False)
-        self.carrier = tk.DoubleVar(value=CARRIER_FREQ)
+    def create(self):
+        frame = ttk.Frame(self.root); frame.pack(padx=10, pady=10)
+        ttk.Label(frame, text="Archivo:").grid(row=0, column=0)
+        ttk.Entry(frame, textvariable=self.path, width=50).grid(row=0, column=1)
+        ttk.Button(frame, text="Seleccionar", command=self.select).grid(row=0, column=2)
+        ttk.Label(frame, text="f0 (Hz):").grid(row=1, column=0)
+        ttk.Entry(frame, textvariable=self.f0).grid(row=1, column=1, sticky="w")
+        ttk.Label(frame, text="f1 (Hz):").grid(row=2, column=0)
+        ttk.Entry(frame, textvariable=self.f1).grid(row=2, column=1, sticky="w")
+        ttk.Button(frame, text="Transmitir", command=self.tx).grid(row=3, column=0, columnspan=3, pady=6)
+        ttk.Button(frame, text="Guardar WAV", command=self.savewav).grid(row=4, column=0, columnspan=3)
 
-        self.create_widgets()
+    def select(self):
+        p = filedialog.askopenfilename()
+        if p: self.path.set(p)
 
-    def create_widgets(self):
-        frame = ttk.LabelFrame(self.root, text="Transmisión Digital")
-        frame.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(frame, text="Archivo a transmitir:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.file_path, width=50).grid(row=0, column=1)
-        ttk.Button(frame, text="Seleccionar archivo",
-                   command=self.select_file).grid(row=0, column=2)
-
-        ttk.Checkbutton(frame, text="Usar FEC (placeholder)",
-                        variable=self.use_fec).grid(row=1, column=0, sticky="w")
-
-        ttk.Label(frame, text="Carrier (Hz):").grid(row=2, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.carrier, width=10).grid(row=2, column=1, sticky="w")
-
-        ttk.Button(frame, text="Transmitir por parlante",
-                   command=self.tx_digital).grid(row=3, column=0, columnspan=3, pady=10)
-
-        ttk.Button(frame, text="Generar WAV modulado",
-                   command=self.save_wav).grid(row=4, column=0, columnspan=3, pady=5)
-
-    def select_file(self):
-        path = filedialog.askopenfilename()
-        if path:
-            self.file_path.set(path)
-
-    def tx_digital(self):
-        if not self.file_path.get():
-            messagebox.showerror("Error", "Selecciona un archivo primero.")
+    def tx(self):
+        if not self.path.get():
+            messagebox.showerror("Error", "Selecciona archivo")
             return
         try:
-            transmit_file(
-                self.file_path.get(),
-                carrier_freq=float(self.carrier.get()),
-                fs=FS,
-                use_fec=self.use_fec.get(),
-                play=True,
-                out_wav=None
-            )
-            messagebox.showinfo("TX", "Transmisión realizada.")
+            transmit_file_fsk(self.path.get(), f0=float(self.f0.get()), f1=float(self.f1.get()), fs=self.fs, play=True)
+            messagebox.showinfo("OK", "Transmitido")
         except Exception as e:
             messagebox.showerror("Error TX", str(e))
 
-    def save_wav(self):
-        if not self.file_path.get():
-            messagebox.showerror("Error", "Selecciona un archivo primero.")
-            return
-
-        fname = filedialog.asksaveasfilename(defaultextension=".wav",
-                                             filetypes=[("WAV files", "*.wav")])
-        if not fname:
-            return
-
-        try:
-            transmit_file(
-                self.file_path.get(),
-                carrier_freq=float(self.carrier.get()),
-                fs=FS,
-                use_fec=self.use_fec.get(),
-                play=False,
-                out_wav=fname
-            )
-            messagebox.showinfo("TX", "WAV generado correctamente.")
-        except Exception as e:
-            messagebox.showerror("Error WAV", str(e))
-
+    def savewav(self):
+        if not self.path.get(): return
+        p = filedialog.asksaveasfilename(defaultextension=".wav")
+        if not p: return
+        transmit_file_fsk(self.path.get(), f0=float(self.f0.get()), f1=float(self.f1.get()), fs=self.fs, play=False, out_wav=p)
+        messagebox.showinfo("Saved", "WAV saved")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = SimpleTX(root)
-    root.mainloop()
+    root = tk.Tk(); app = SimpleTX(root); root.mainloop()

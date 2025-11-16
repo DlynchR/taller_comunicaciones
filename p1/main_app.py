@@ -10,7 +10,7 @@ import os
 
 # Importar las funciones de los módulos de simulación
 from ssb_isb_simulator import load_audio, save_audio, play_audio, plot_spectrum, plot_time_domain, ssb_modulate, isb_modulate, ssb_demodulate, hilbert_transform
-from digital_passband_modulator import file_to_bits, bits_to_file, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, record_audio, receive_and_demodulate_passband_signal, bpsk_demodulate, decode_data_with_protocol, calculate_ber, plot_constellation, plot_eye_diagram, FS, CARRIER_FREQ, BAUD_RATE, SAMPLES_PER_SYMBOL
+from digital_passband_modulator_fsk import file_to_bits, bits_to_file, encode_data_with_protocol, bpsk_modulate, generate_passband_signal, transmit_audio, record_audio, receive_and_demodulate_passband_signal, bpsk_demodulate, decode_data_with_protocol, calculate_ber, plot_constellation, plot_eye_diagram, FS, CARRIER_FREQ, BAUD_RATE, SAMPLES_PER_SYMBOL
 
 class CommunicationsSimulatorApp:
     def __init__(self, root):
