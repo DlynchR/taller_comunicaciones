@@ -84,10 +84,13 @@ def decode_fec(bits: List[int]) -> List[int]:
 
 # --- Protocolo Simple ---
 
+# Patrón de sincronización robusto (Barker code 13)
+SYNC_PATTERN = [1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1]
+
 def encode_protocol(data_bits: List[int], file_size: int, use_fec: bool) -> List[int]:
     """
     Codifica datos con protocolo simple:
-    [32 bits header] [datos]
+    [13 bits sync] [32 bits header] [datos]
     
     Header (32 bits):
       - Bit 31: FEC flag (1=FEC enabled, 0=disabled)
@@ -104,20 +107,57 @@ def encode_protocol(data_bits: List[int], file_size: int, use_fec: bool) -> List
     header_bytes = struct.pack(">I", header_value)
     header_bits = bytes_to_bits(header_bytes)
     
-    # Retornar header + datos
-    return header_bits + data_bits
+    # Retornar sync + header + datos
+    return SYNC_PATTERN + header_bits + data_bits
+
+def find_sync_pattern(bits: List[int]) -> int:
+    """Busca el patrón de sincronización en los bits recibidos usando correlación."""
+    if len(bits) < len(SYNC_PATTERN):
+        return -1
+    
+    best_correlation = 0
+    best_position = -1
+    
+    # Buscar la posición con mayor correlación
+    for i in range(len(bits) - len(SYNC_PATTERN) + 1):
+        correlation = sum(bits[i+j] == SYNC_PATTERN[j] for j in range(len(SYNC_PATTERN)))
+        if correlation > best_correlation:
+            best_correlation = correlation
+            best_position = i
+    
+    # Requerir al menos 11 de 13 bits correctos
+    if best_correlation >= 11:
+        return best_position
+    return -1
 
 def decode_protocol(received_bits: List[int]) -> Tuple[List[int], int, bool]:
     """
-    Decodifica protocolo simple.
+    Decodifica protocolo simple con detección de patrón de sincronización.
     Retorna: (data_bits, file_size, success)
     """
-    if len(received_bits) < 32:
-        print("Error: Bits insuficientes para header")
+    MIN_BITS = len(SYNC_PATTERN) + 32  # sync + header
+    if len(received_bits) < MIN_BITS:
+        print(f"Error: Bits insuficientes ({len(received_bits)} < {MIN_BITS})")
+        return None, 0, False
+    
+    # Buscar patrón de sincronización
+    sync_pos = find_sync_pattern(received_bits)
+    if sync_pos < 0:
+        print("❌ Error: No se encontró patrón de sincronización")
+        print(f"   Bits iniciales: {''.join(map(str, received_bits[:50]))}")
+        return None, 0, False
+    
+    print(f"  ✅ Sync encontrado en posición {sync_pos}")
+    
+    # Extraer bits alineados después del sync
+    aligned_bits = received_bits[sync_pos + len(SYNC_PATTERN):]
+    
+    if len(aligned_bits) < 32:
+        print("Error: Bits insuficientes después del sync")
         return None, 0, False
     
     # Extraer header
-    header_bits = received_bits[:32]
+    header_bits = aligned_bits[:32]
     header_bytes = bits_to_bytes(header_bits)
     header_value = struct.unpack(">I", header_bytes)[0]
     
@@ -142,8 +182,8 @@ def decode_protocol(received_bits: List[int]) -> Tuple[List[int], int, bool]:
     else:
         expected_received_bits = expected_data_bits
     
-    # Extraer datos
-    data_bits = received_bits[32:32 + expected_received_bits]
+    # Extraer datos (desde después del header en aligned_bits)
+    data_bits = aligned_bits[32:32 + expected_received_bits]
     
     # Rellenar con ceros si faltan bits
     if len(data_bits) < expected_received_bits:
