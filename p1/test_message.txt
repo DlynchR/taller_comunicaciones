@@ -1,0 +1,9 @@
+Hello, this is a test message for digital transmission!
+
+This system uses:
+- BPSK modulation
+- Tone-based synchronization (1kHz start, 2kHz stop)
+- Optional FEC with triple repetition
+- UTF-8 text encoding
+
+Testing 123... ¡Hola mundo!
