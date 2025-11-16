@@ -125,6 +125,14 @@ def decode_protocol(received_bits: List[int]) -> Tuple[List[int], int, bool]:
     fec_enabled = bool((header_value >> 31) & 1)
     file_size = header_value & 0x7FFFFFFF
     
+    # SANITY CHECK: Validar que el tamaño del archivo sea razonable
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB máximo
+    if file_size > MAX_FILE_SIZE or file_size == 0:
+        print(f"❌ Error: Tamaño de archivo inválido: {file_size} bytes")
+        print(f"   Header value raw: {header_value:032b} (0x{header_value:08X})")
+        print(f"   Bits recibidos insuficientes o corruptos")
+        return None, 0, False
+    
     print(f"  Header decodificado: Size={file_size} bytes, FEC={'Sí' if fec_enabled else 'No'}")
     
     # Calcular bits esperados

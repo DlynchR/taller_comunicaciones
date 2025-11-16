@@ -43,26 +43,35 @@ def generate_passband_signal(symbols, carrier_freq, fs, samples_per_symbol):
     return signal_out
 
 def demodulate_passband_signal(received, carrier_freq, fs, samples_per_symbol, num_symbols):
-    """Demodula señal pasobanda BPSK"""
-    # Mezcla con portadora local
+    """Demodula señal pasobanda BPSK con mejor sincronización"""
+    # Mezcla con portadora local (ambas en fase e cuadratura)
     t = np.arange(len(received)) / fs
-    local_carrier = np.cos(2 * np.pi * carrier_freq * t)
-    baseband = received * local_carrier
+    local_carrier_i = np.cos(2 * np.pi * carrier_freq * t)
+    local_carrier_q = -np.sin(2 * np.pi * carrier_freq * t)
+    
+    baseband_i = received * local_carrier_i
+    baseband_q = received * local_carrier_q
     
     # Filtro pasa-bajos
     nyquist = 0.5 * fs
     cutoff = min(BAUD_RATE / 2 * 1.5, nyquist * 0.9)
     b, a = signal.butter(5, cutoff / nyquist, btype='low')
-    filtered = signal.lfilter(b, a, baseband)
+    filtered_i = signal.lfilter(b, a, baseband_i)
+    filtered_q = signal.lfilter(b, a, baseband_q)
     
-    # Muestreo de símbolos
+    # Combinar I y Q
+    filtered = filtered_i + 1j * filtered_q
+    
+    # Muestreo de símbolos (ajustado para compensar delay del filtro)
+    filter_delay = len(b) // 2
     symbols = []
     for i in range(num_symbols):
-        idx = int(i * samples_per_symbol + samples_per_symbol / 2)
+        idx = int(i * samples_per_symbol + samples_per_symbol / 2 + filter_delay)
         if idx < len(filtered):
-            symbols.append(filtered[idx])
+            # Usar solo la componente real (I) para BPSK
+            symbols.append(np.real(filtered[idx]))
         else:
-            symbols.append(0)
+            break
     
     return np.array(symbols)
 
@@ -174,13 +183,25 @@ def receive_text_file(output_path, carrier_freq, fs):
     
     print(f"✅ Grabación completa: {len(received)} muestras ({len(received)/fs:.2f}s)")
     
+    # Normalizar señal recibida
+    received = received / (np.max(np.abs(received)) + 1e-12)
+    
     # Demodular
     est_symbols = max(1, int(len(received) / SAMPLES_PER_SYMBOL))
+    print(f"📊 Estimando {est_symbols} símbolos...")
     symbols = demodulate_passband_signal(received, carrier_freq, fs, SAMPLES_PER_SYMBOL, est_symbols)
+    
+    print(f"✅ Símbolos demodulados: {len(symbols)}")
+    print(f"   Rango de amplitudes: [{np.min(symbols):.3f}, {np.max(symbols):.3f}]")
     
     # BPSK -> Bits
     bits = bpsk_demodulate(symbols)
     print(f"✅ Bits demodulados: {len(bits)}")
+    
+    # Mostrar los primeros bits del header para debugging
+    if len(bits) >= 32:
+        header_preview = ''.join(map(str, bits[:32]))
+        print(f"   Header bits: {header_preview}")
     
     # Decodificar protocolo y guardar
     success, stats = decode_to_text_file(bits, output_path)
