@@ -21,13 +21,15 @@ def bits_to_bytes(bits: List[int]) -> bytes:
     """Convierte lista de bits a bytes."""
     # Pad to multiple of 8
     padding = (8 - (len(bits) % 8)) % 8
-    bits = bits + [0] * padding
+    if padding > 0:
+        bits = bits + [0] * padding
     
     ba = bytearray()
     for i in range(0, len(bits), 8):
         byte = 0
         for j in range(8):
-            byte = (byte << 1) | (bits[i + j] & 1)
+            if bits[i + j]:
+                byte |= (1 << (7 - j))
         ba.append(byte)
     return bytes(ba)
 
@@ -138,7 +140,7 @@ def decode_protocol(received_bits: List[int]) -> Tuple[List[int], int, bool]:
     # Rellenar con ceros si faltan bits
     if len(data_bits) < expected_received_bits:
         print(f"  Warning: Faltan {expected_received_bits - len(data_bits)} bits, rellenando con ceros")
-        data_bits = data_bits + [0] * (expected_received_bits - len(data_bits))
+        data_bits.extend([0] * (expected_received_bits - len(data_bits)))
     
     # Decodificar FEC si está habilitado
     if fec_enabled:
@@ -149,7 +151,7 @@ def decode_protocol(received_bits: List[int]) -> Tuple[List[int], int, bool]:
     if len(data_bits) > expected_data_bits:
         data_bits = data_bits[:expected_data_bits]
     elif len(data_bits) < expected_data_bits:
-        data_bits = data_bits + [0] * (expected_data_bits - len(data_bits))
+        data_bits.extend([0] * (expected_data_bits - len(data_bits)))
     
     return data_bits, file_size, True
 
