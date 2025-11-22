@@ -20,6 +20,8 @@ class TXApp:
         self.fc_ssb = tk.DoubleVar(value=15000.0)
         self.mod_type = tk.StringVar(value="SSB-SC")
         self.band_type = tk.StringVar(value="USB")
+        self.phase_error = tk.DoubleVar(value=0.0)
+        self.freq_error = tk.DoubleVar(value=0.0)
 
         # Variables digitales
         self.digital_path = tk.StringVar()
@@ -70,8 +72,14 @@ class TXApp:
         ttk.Label(frame_ssb, text="Frecuencia portadora (Hz, ≤25000):").grid(row=4, column=0, sticky="w")
         ttk.Entry(frame_ssb, textvariable=self.fc_ssb, width=12).grid(row=4, column=1, sticky="w")
 
+        ttk.Label(frame_ssb, text="Error de fase (grados):").grid(row=5, column=0, sticky="w")
+        ttk.Entry(frame_ssb, textvariable=self.phase_error, width=12).grid(row=5, column=1, sticky="w")
+
+        ttk.Label(frame_ssb, text="Error de frecuencia (Hz):").grid(row=6, column=0, sticky="w")
+        ttk.Entry(frame_ssb, textvariable=self.freq_error, width=12).grid(row=6, column=1, sticky="w")
+
         btn_frame = ttk.Frame(frame_ssb)
-        btn_frame.grid(row=5, column=0, columnspan=3, pady=6)
+        btn_frame.grid(row=7, column=0, columnspan=3, pady=6)
         ttk.Button(btn_frame, text="Modular y Transmitir", command=self.tx_ssb).pack(side="left", padx=6)
         ttk.Button(btn_frame, text="Guardar WAV Modulado", command=self.save_modulated_ssb).pack(side="left", padx=6)
         ttk.Button(btn_frame, text="Mostrar Gráficas", command=self.show_tx_plots_ssb).pack(side="left", padx=6)
