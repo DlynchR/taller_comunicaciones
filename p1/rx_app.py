@@ -16,6 +16,7 @@ from digital_passband_modulator import (
     decode_data_simple,   # ← usamos este
     bpsk_demodulate,
     bits_to_file,
+    decode_fec,
     FS,
     CARRIER_FREQ,
     SAMPLES_PER_SYMBOL
@@ -34,6 +35,7 @@ class RXApp:
 
         # Parámetros digitales
         self.carrier_dig = tk.DoubleVar(value=CARRIER_FREQ)
+        self.digital_use_fec = tk.BooleanVar(value=False)
 
         self.create_widgets()
 
@@ -70,7 +72,9 @@ class RXApp:
         ttk.Label(frame_dig, text="Frecuencia portadora digital (Hz):").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame_dig, textvariable=self.carrier_dig, width=12).grid(row=0, column=1, sticky="w")
 
-        ttk.Button(frame_dig, text="Escuchar y Demodular Digital", command=self.rx_digital).grid(row=1, column=0, columnspan=2, pady=6)
+        ttk.Checkbutton(frame_dig, text="Usar FEC (Hamming 7,4)", variable=self.digital_use_fec).grid(row=1, column=0, columnspan=2, sticky="w")
+
+        ttk.Button(frame_dig, text="Escuchar y Demodular Digital", command=self.rx_digital).grid(row=2, column=0, columnspan=2, pady=6)
 
     def rx_ssb(self):
         try:
@@ -128,14 +132,17 @@ class RXApp:
             demod_bits = bpsk_demodulate(sampled_symbols)
 
             # 4) Decodificación de protocolo (encuentra preámbulo y tamaño automáticamente)
-
             recovered_bits, original_size = decode_data_simple(demod_bits)
 
             if recovered_bits is None:
                 messagebox.showerror("Error en protocolo", "No se pudo detectar el preámbulo o el tamaño del archivo.")
                 return
 
-            # 5) Guardar archivo recuperado
+            # 5) Decodificar FEC si está habilitado
+            use_fec = self.digital_use_fec.get()
+            recovered_bits = decode_fec(recovered_bits, use_fec=use_fec)
+
+            # 6) Guardar archivo recuperado
             outname = filedialog.asksaveasfilename(
                 defaultextension="",
                 filetypes=[

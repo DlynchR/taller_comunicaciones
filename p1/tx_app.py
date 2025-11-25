@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 # Importar funciones proporcionadas por tus módulos
 from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio, plot_spectrum, plot_time_domain
-from digital_passband_modulator import file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, transmit_audio, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
+from digital_passband_modulator import file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, transmit_audio, apply_fec, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
 
 class TXApp:
     def __init__(self, root):
@@ -92,7 +92,7 @@ class TXApp:
         ttk.Entry(frame_dig, textvariable=self.digital_path, width=50).grid(row=0, column=1)
         ttk.Button(frame_dig, text="Seleccionar", command=lambda: self.select_file(self.digital_path)).grid(row=0, column=2)
 
-        ttk.Checkbutton(frame_dig, text="Usar FEC (placeholder)", variable=self.digital_use_fec).grid(row=1, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(frame_dig, text="Usar FEC (Hamming 7,4)", variable=self.digital_use_fec).grid(row=1, column=0, columnspan=2, sticky="w")
         ttk.Label(frame_dig, text="Frecuencia portadora (Hz):").grid(row=2, column=0, sticky="w")
         ttk.Entry(frame_dig, textvariable=self.carrier_digital, width=12).grid(row=2, column=1, sticky="w")
 
@@ -174,8 +174,12 @@ class TXApp:
             bits = file_to_bits(self.digital_path.get())
             size = os.path.getsize(self.digital_path.get())
 
+            # Aplicar FEC si está habilitado
+            use_fec = self.digital_use_fec.get()
+            bits_with_fec = apply_fec(bits, use_fec=use_fec)
+
             # Codificación sin preámbulo: solo tamaño + bits
-            encoded = encode_data_simple(bits, size)
+            encoded = encode_data_simple(bits_with_fec, size)
 
             # Modulación
             symbols = bpsk_modulate(encoded)

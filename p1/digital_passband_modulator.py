@@ -139,22 +139,81 @@ def plot_eye_diagram(signal_data, samples_per_symbol, num_symbols_to_plot=3, tit
     if ax is None:
         plt.show()
 
-# --- Codificación de Canal (Placeholder) ---
+# --- Codificación de Canal (Hamming 7,4) ---
+
+def hamming_encode_4bits(data_bits):
+    """Codifica 4 bits de datos en 7 bits Hamming(7,4).
+    data_bits: lista de 4 bits [d1, d2, d3, d4]
+    Retorna: lista de 7 bits [p1, p2, d1, p3, d2, d3, d4]
+    """
+    d1, d2, d3, d4 = data_bits
+    
+    # Calcular bits de paridad
+    p1 = d1 ^ d2 ^ d4  # Paridad para posiciones 1,3,5,7
+    p2 = d1 ^ d3 ^ d4  # Paridad para posiciones 2,3,6,7
+    p3 = d2 ^ d3 ^ d4  # Paridad para posiciones 4,5,6,7
+    
+    return [p1, p2, d1, p3, d2, d3, d4]
+
+def hamming_decode_7bits(code_bits):
+    """Decodifica 7 bits Hamming(7,4) y corrige 1 error si existe.
+    code_bits: lista de 7 bits [p1, p2, d1, p3, d2, d3, d4]
+    Retorna: lista de 4 bits de datos corregidos [d1, d2, d3, d4]
+    """
+    if len(code_bits) != 7:
+        return [0, 0, 0, 0]
+    
+    p1, p2, d1, p3, d2, d3, d4 = code_bits
+    
+    # Calcular síndromes
+    s1 = p1 ^ d1 ^ d2 ^ d4
+    s2 = p2 ^ d1 ^ d3 ^ d4
+    s3 = p3 ^ d2 ^ d3 ^ d4
+    
+    # Determinar posición del error (si existe)
+    error_pos = s1 * 1 + s2 * 2 + s3 * 4
+    
+    # Corregir el error si existe
+    if error_pos != 0:
+        code_bits = code_bits.copy()
+        code_bits[error_pos - 1] ^= 1  # Invertir el bit erróneo
+        p1, p2, d1, p3, d2, d3, d4 = code_bits
+    
+    return [d1, d2, d3, d4]
 
 def apply_fec(bits, use_fec=False):
-    """Aplica un algoritmo de corrección de errores (placeholder)."""
-    if use_fec:
-        print("Aplicando FEC (placeholder: no se aplica FEC real).")
-        # Aquí iría la lógica real de codificación FEC, por ejemplo, Hamming o Reed-Solomon
-        # Por ahora, solo devolvemos los bits originales.
-    return bits
+    """Aplica codificación Hamming(7,4) si use_fec es True."""
+    if not use_fec:
+        return bits
+    
+    encoded_bits = []
+    # Procesar en bloques de 4 bits
+    for i in range(0, len(bits), 4):
+        block = bits[i:i+4]
+        # Rellenar con ceros si el bloque es incompleto
+        while len(block) < 4:
+            block.append(0)
+        encoded_block = hamming_encode_4bits(block)
+        encoded_bits.extend(encoded_block)
+    
+    print(f"FEC aplicado: {len(bits)} bits → {len(encoded_bits)} bits (Hamming 7,4)")
+    return encoded_bits
 
 def decode_fec(bits, use_fec=False):
-    """Decodifica un algoritmo de corrección de errores (placeholder)."""
-    if use_fec:
-        print("Decodificando FEC (placeholder: no se decodifica FEC real).")
-        # Aquí iría la lógica real de decodificación FEC
-    return bits
+    """Decodifica Hamming(7,4) si use_fec es True."""
+    if not use_fec:
+        return bits
+    
+    decoded_bits = []
+    # Procesar en bloques de 7 bits
+    for i in range(0, len(bits), 7):
+        block = bits[i:i+7]
+        if len(block) == 7:
+            decoded_block = hamming_decode_7bits(block)
+            decoded_bits.extend(decoded_block)
+    
+    print(f"FEC decodificado: {len(bits)} bits → {len(decoded_bits)} bits (Hamming 7,4)")
+    return decoded_bits
 
 # --- Modulación Digital (BPSK como ejemplo) ---
 
