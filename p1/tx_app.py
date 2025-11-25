@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 
 # Importar funciones proporcionadas por tus módulos
 from ssb_isb_simulator import load_audio, ssb_modulate, isb_modulate, save_audio, play_audio, plot_spectrum, plot_time_domain
-from digital_passband_modulator import file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, transmit_audio, apply_fec, FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL
+from digital_passband_modulator import (file_to_bits, encode_data_simple, bpsk_modulate, generate_passband_signal, 
+                                         transmit_audio, apply_fec, plot_constellation, plot_eye_diagram,
+                                         FS, CARRIER_FREQ, SAMPLES_PER_SYMBOL)
 
 class TXApp:
     def __init__(self, root):
@@ -29,10 +31,15 @@ class TXApp:
         self.carrier_digital = tk.DoubleVar(value=CARRIER_FREQ)
         self.fs = FS
 
-        # Variables para almacenar datos de graficación
+        # Variables para almacenar datos de graficación SSB/ISB
         self.last_msg_signal = None
         self.last_msg_fs = None
         self.last_modulated_signal = None
+
+        # Variables para almacenar datos de graficación digital
+        self.last_digital_symbols = None
+        self.last_digital_baseband = None
+        self.last_digital_passband = None
 
         self.create_widgets()
 
@@ -100,6 +107,7 @@ class TXApp:
         btn_frame2.grid(row=3, column=0, columnspan=3, pady=6)
         ttk.Button(btn_frame2, text="Transmitir Archivo (por parlante)", command=self.tx_digital).pack(side="left", padx=6)
         ttk.Button(btn_frame2, text="Generar WAV Modulado", command=self.save_modulated_digital).pack(side="left", padx=6)
+        ttk.Button(btn_frame2, text="Mostrar Gráficas", command=self.show_tx_plots_digital).pack(side="left", padx=6)
 
     def select_file(self, var, types=[("All files","*.*")]):
         path = filedialog.askopenfilename(filetypes=types)
@@ -187,6 +195,13 @@ class TXApp:
             passband = generate_passband_signal(symbols, carrier, self.fs, SAMPLES_PER_SYMBOL)
             passband = 0.8 * passband / (np.max(np.abs(passband)) + 1e-12)
 
+            # Guardar datos para graficación (sin balizas)
+            self.last_digital_symbols = symbols
+            # Generar señal banda base para graficación (símbolos expandidos sin modulación)
+            baseband_signal = np.repeat(symbols, SAMPLES_PER_SYMBOL)
+            self.last_digital_baseband = baseband_signal
+            self.last_digital_passband = passband
+
             # Señales de inicio (1 kHz) y fin (2 kHz)
             start_beacon = self._load_beacon("message_start.wav", 1000.0, self.fs)
             end_beacon = self._load_beacon("message_end.wav", 2000.0, self.fs)
@@ -242,6 +257,48 @@ class TXApp:
 
             # Gráfica 4: Espectro de la señal modulada
             plot_spectrum(mod, fs, "Señal Modulada (Espectro)", ax=axs[1, 1])
+
+            plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+            plt.show()
+
+        except Exception as e:
+            messagebox.showerror("Error al graficar", str(e))
+
+    def show_tx_plots_digital(self):
+        """Muestra gráficas para transmisión digital: banda base, pasobanda, constelación y diagrama de ojo."""
+        try:
+            if self.last_digital_symbols is None or self.last_digital_passband is None:
+                messagebox.showwarning("Aviso", "No hay datos para graficar. Ejecuta 'Transmitir Archivo' primero.")
+                return
+
+            symbols = self.last_digital_symbols
+            baseband = self.last_digital_baseband
+            passband = self.last_digital_passband
+            fs = self.fs
+
+            # Crear figura con 6 subplots (3x2)
+            fig, axs = plt.subplots(3, 2, figsize=(14, 12))
+            fig.suptitle('Análisis TX - Señales Generadas', fontsize=14, fontweight='bold')
+
+            # Gráfica 1: Señal Banda Base en tiempo (primero 1s)
+            plot_time_domain(baseband[:fs], fs, "Señal Baseband (Tiempo - 1s)", ax=axs[0, 0])
+
+            # Gráfica 2: Espectro de la señal banda base
+            plot_spectrum(baseband, fs, "Señal Baseband (Espectro)", ax=axs[0, 1])
+
+            # Gráfica 3: Señal Pasobanda Modulada en tiempo (primero 1s)
+            plot_time_domain(passband[:fs], fs, "Señal Pasobanda Modulada (Tiempo - 1s)", ax=axs[1, 0])
+
+            # Gráfica 4: Espectro de la señal pasobanda
+            plot_spectrum(passband, fs, "Señal Pasobanda (Espectro)", ax=axs[1, 1])
+
+            # Gráfica 5: Constelación BPSK (primeros 500 símbolos)
+            num_symbols_to_plot = min(500, len(symbols))
+            plot_constellation(symbols[:num_symbols_to_plot], "Constelación BPSK (primeros 500 símbolos)", ax=axs[2, 0])
+
+            # Gráfica 6: Diagrama de Ojo (Baseband)
+            plot_eye_diagram(baseband, SAMPLES_PER_SYMBOL, num_symbols_to_plot=3, 
+                           title="Diagrama de Ojo (Baseband)", ax=axs[2, 1])
 
             plt.tight_layout(rect=[0, 0.03, 1, 0.97])
             plt.show()
