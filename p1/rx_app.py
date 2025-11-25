@@ -17,6 +17,7 @@ from digital_passband_modulator import (
     bpsk_demodulate,
     bits_to_file,
     decode_fec,
+    plot_eye_diagram,
     FS,
     CARRIER_FREQ,
     SAMPLES_PER_SYMBOL
@@ -48,6 +49,11 @@ class RXApp:
         self.last_demodulated_ssb = None
         self.last_fs_ssb = None
 
+        # Variables para almacenar datos de graficación digital
+        self.last_received_digital = None
+        self.last_demodulated_baseband = None
+        self.last_filtered_baseband = None
+
     def create_widgets(self):
         frame_ssb = ttk.LabelFrame(self.root, text="Recepción SSB / ISB (Audio)")
         frame_ssb.pack(fill="x", padx=8, pady=6)
@@ -74,7 +80,10 @@ class RXApp:
 
         ttk.Checkbutton(frame_dig, text="Usar FEC (Hamming 7,4)", variable=self.digital_use_fec).grid(row=1, column=0, columnspan=2, sticky="w")
 
-        ttk.Button(frame_dig, text="Escuchar y Demodular Digital", command=self.rx_digital).grid(row=2, column=0, columnspan=2, pady=6)
+        btn_frame_dig = ttk.Frame(frame_dig)
+        btn_frame_dig.grid(row=2, column=0, columnspan=2, pady=6)
+        ttk.Button(btn_frame_dig, text="Escuchar y Demodular Digital", command=self.rx_digital).pack(side="left", padx=6)
+        ttk.Button(btn_frame_dig, text="Mostrar Gráficas", command=self.show_rx_plots_digital).pack(side="left", padx=6)
 
     def rx_ssb(self):
         try:
@@ -127,6 +136,11 @@ class RXApp:
             sampled_symbols, filtered_baseband, demodulated_baseband = receive_and_demodulate_passband_signal(
                 rec, carrier, FS, SAMPLES_PER_SYMBOL, est_num_symbols
             )
+
+            # Guardar datos para graficación
+            self.last_received_digital = rec
+            self.last_demodulated_baseband = demodulated_baseband
+            self.last_filtered_baseband = filtered_baseband
 
             # 3) BPSK → Bits
             demod_bits = bpsk_demodulate(sampled_symbols)
@@ -190,6 +204,53 @@ class RXApp:
 
             # Gráfica 4: Espectro de la señal demodulada
             plot_spectrum(demod, fs, "Señal Demodulada (Espectro)", ax=axs[1, 1])
+
+            plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+            plt.show()
+
+        except Exception as e:
+            messagebox.showerror("Error al graficar", str(e))
+
+    def show_rx_plots_digital(self):
+        """Muestra gráficas para recepción digital: señal grabada, demodulada, zoom y diagrama de ojo."""
+        try:
+            if self.last_received_digital is None or self.last_filtered_baseband is None:
+                messagebox.showwarning("Aviso", "No hay datos para graficar. Ejecuta 'Escuchar y Demodular Digital' primero.")
+                return
+
+            rec = self.last_received_digital
+            demod_baseband = self.last_demodulated_baseband
+            filtered = self.last_filtered_baseband
+            fs = FS
+
+            # Crear figura con 6 subplots (3x2)
+            fig, axs = plt.subplots(3, 2, figsize=(14, 12))
+            fig.suptitle('Análisis RX - Señal grabada y baseband', fontsize=14, fontweight='bold')
+
+            # Gráfica 1: Señal grabada en tiempo
+            plot_time_domain(rec, fs, "Señal grabada (Tiempo)", ax=axs[0, 0])
+
+            # Gráfica 2: Espectro de la señal grabada
+            plot_spectrum(rec, fs, "Señal grabada (Espectro)", ax=axs[0, 1])
+
+            # Gráfica 3: Baseband demodulado (producto con cos) en tiempo
+            plot_time_domain(demod_baseband, fs, "Baseband demodulado (Producto con cos)", ax=axs[1, 0])
+
+            # Gráfica 4: Espectro del baseband demodulado
+            plot_spectrum(demod_baseband, fs, "Baseband demodulado (Espectro)", ax=axs[1, 1])
+
+            # Gráfica 5: Filtered baseband con zoom (primeros 0.5s)
+            zoom_samples = int(0.5 * fs)
+            t_zoom = np.arange(0, min(zoom_samples, len(filtered))) / fs
+            axs[2, 0].plot(t_zoom, filtered[:zoom_samples])
+            axs[2, 0].set_title("Filtered baseband (Zoom 0.5s)")
+            axs[2, 0].set_xlabel("Tiempo (s)")
+            axs[2, 0].set_ylabel("Amplitud")
+            axs[2, 0].grid()
+
+            # Gráfica 6: Diagrama de ojo (aplicado por símbolo)
+            plot_eye_diagram(filtered, SAMPLES_PER_SYMBOL, num_symbols_to_plot=3,
+                           title="Diagrama de ojo (aplicado por símbolo)", ax=axs[2, 1])
 
             plt.tight_layout(rect=[0, 0.03, 1, 0.97])
             plt.show()
